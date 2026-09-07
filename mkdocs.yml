@@ -1,0 +1,61 @@
+site_name: propax
+site_description: Differentiable fluid properties in pure JAX
+repo_url: https://github.com/cziffras/propax
+repo_name: cziffras/propax
+edit_uri: ""
+
+theme:
+  name: material
+
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      toggle: {icon: material/weather-sunny, name: Light mode}
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight: {anchor_linenums: true}
+  - toc: {permalink: true}
+  - pymdownx.arithmatex: {generic: true}
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            heading_level: 3
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: false
+            merge_init_into_class: true
+            filters: ["!^_"]
+
+nav:
+  - Home: index.md
+  - Reference: reference.md
+  - Theory:
+      - Equations of state: eos.md
+      - The flash: flash.md
+      - Superancillary: superancillary.md
+      - Transport: transport.md
