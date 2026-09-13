@@ -50,15 +50,27 @@ class _Const:
     preventing any batching in vmaps duplicating it, that might cause OOM.
     """
 
-    __slots__ = ("array", "_hash", "shape")
+    __slots__ = ("_host", "_device", "_hash", "shape")
 
     def __init__(self, a):
         a = np.ascontiguousarray(a)
-        self.array = jnp.asarray(a)
-        self.shape = jnp.asarray(a).shape
-        self._hash = hash(
-            (a.shape, a.dtype.str, hashlib.blake2b(a.data, digest_size=16).digest())
-        )
+        # avoid desynchronizing host and device
+        # (host stores a new value if the user
+        # sets it and device did not modify its cache)
+        a.flags.writeable = False
+        self._host = a
+        self._device = {}
+        self.shape = a.shape
+        self._hash = hash((a.shape, a.dtype.str, hashlib.blake2b(a.data).digest()))
+
+    @property
+    def array(self):
+        x64 = jax.config.read("jax_enable_x64")
+        if x64 not in self._device:
+            # do not cache a tracer
+            with jax.ensure_compile_time_eval():
+                self._device[x64] = jnp.asarray(self._host)
+        return self._device[x64]
 
     def __hash__(self):
         return self._hash
@@ -67,7 +79,7 @@ class _Const:
         return isinstance(other, _Const) and self._hash == other._hash
 
     def __repr__(self):
-        return f"_Const(shape={self.array.shape}, dtype={self.array.dtype})"
+        return f"_Const(shape={self._host.shape}, dtype={self._host.dtype})"
 
 
 class ChebyshevPieces(eqx.Module):
