@@ -163,6 +163,8 @@ class ChebyshevPieces(eqx.Module):
 
         Fixed shape, NaN where that segment does not reach y.
         """
+
+        # useful for non monotonic components
         cuts = self.cuts.array[component]
         y = jnp.asarray(y)
 

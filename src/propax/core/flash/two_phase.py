@@ -9,6 +9,7 @@ from jaxtyping import Array
 from propax.fluids.generic import HelmholtzEOS
 from propax.utils.types import jaxBool
 
+from ...utils.numerics import pick
 from ..config import ThermoVar
 from ..domain import clamp_quality, is_two_phase
 from ..saturation import Superancillary
@@ -103,9 +104,7 @@ def solve_two_phase(
         sat_dict = saturation.state_P(P_val)
         L, V = get_sat_bounds(sat_dict, other_tvar)
 
-        other_norm = jnp.where(
-            other_tvar.spec.invert_for_mixing, 1.0 / other_val, other_val
-        )
+        other_norm = pick(other_tvar.spec.invert_for_mixing, 1.0 / other_val, other_val)
         x_final = (other_norm - L) / (V - L)
 
         # `sat_dict.is_valid` carries whether the P -> T_sat inversion
@@ -130,9 +129,7 @@ def solve_two_phase(
         sat_dict = saturation.state_T(T_val)
         L, V = get_sat_bounds(sat_dict, other_tvar)
 
-        other_norm = jnp.where(
-            other_tvar.spec.invert_for_mixing, 1.0 / other_val, other_val
-        )
+        other_norm = pick(other_tvar.spec.invert_for_mixing, 1.0 / other_val, other_val)
         x_final = (other_norm - L) / (V - L)
 
         # as in the P branch: a saturation state the module itself flags as
@@ -163,12 +160,8 @@ def solve_two_phase(
         # linear might not be linear in fact, so naming here is rather done to reflect the author's intent
         # never met a case where calling solve pair with a pair of two non linear variables
 
-    linear_norm = jnp.where(
-        linear_meta.spec.invert_for_mixing, 1.0 / linear_val, linear_val
-    )
-    other_norm = jnp.where(
-        other_meta.spec.invert_for_mixing, 1.0 / other_val, other_val
-    )
+    linear_norm = pick(linear_meta.spec.invert_for_mixing, 1.0 / linear_val, linear_val)
+    other_norm = pick(other_meta.spec.invert_for_mixing, 1.0 / other_val, other_val)
     s_linear = jnp.asarray(ThermoVar(linear_name).spec.scale, dtype=other_norm.dtype)
 
     def residual(T, args):
@@ -181,7 +174,7 @@ def solve_two_phase(
         sat_dict = saturation.state_T(T_clamped)
 
         L_other, V_other = get_sat_bounds(sat_dict, other_meta)
-        denom = jnp.where(
+        denom = pick(
             jnp.abs(V_other - L_other) < TOL.acc.lever_denom_atol,
             1.0,
             V_other - L_other,
@@ -205,7 +198,7 @@ def solve_two_phase(
         # A non-finite residual anywhere in a vmapped batch aborts the
         # whole batch inside lineax; return a large finite value instead
         # so only this lane fails to converge.
-        return jnp.where(jnp.isfinite(res), res, 1e6)
+        return pick(jnp.isfinite(res), res, 1e6)
 
     # Reaching case 3 means neither P nor T pins T_sat, so this Newton is
     # the only thing standing between the caller and a wrong phase
@@ -217,27 +210,16 @@ def solve_two_phase(
     # However : in s = sqrt(1 - T/T_crit), not in T: the dome closes like sqrt(theta), so
     # a scan uniform in T spends its last cell on the whole critical region and
     # steps over the crossing there --> uniform in s it resolves it
-    T_lo_scan = jnp.asarray(saturation.T_min)
-    T_hi_scan = jnp.asarray(saturation.T_crit)
-    T_scan = saturation.T_of_s(
-        jnp.linspace(0.0, saturation.s_of_T(T_lo_scan), TOL.caps.n_seed_scan)
-    )
-    scan_args = (linear_norm, other_norm, s_linear)
-    r_scan = jnp.asarray(jax.vmap(lambda t: residual(t, scan_args))(T_scan))
-    r_scan = jnp.where(jnp.isfinite(r_scan), r_scan, jnp.inf)
 
-    crosses = (r_scan[:-1] * r_scan[1:]) <= 0.0
-    k = jnp.argmax(crosses)
-    # no sign change anywhere: the state is not two-phase, and the Newton
-    # below will fail to converge, which `is_valid_flag` then reports
-    T_guess = jnp.where(
-        crosses.any(), 0.5 * (T_scan[k] + T_scan[k + 1]), 0.5 * (T_lo_scan + T_hi_scan)
+    T_dummy = jax.lax.stop_gradient((saturation.T_min + saturation.T_crit) / 2.0)
+    sat_dummy = saturation.state_T(T_dummy)
+
+    T_guess, crossed = _provide_guess_and_flag_for_third_case(
+        residual, saturation, T_dummy, linear_norm, other_norm, s_linear
     )
-    T_guess = jnp.where(jnp.isfinite(T_guess), T_guess, 0.5 * (T_lo_scan + T_hi_scan))
 
     # filler for non-finite lanes; the spline answers, no equilibrium
     # solve is needed to fabricate values that are thrown away
-    sat_dummy = saturation.state_T((eos.T_triple + eos.T_crit) / 2.0)
     L_lin_dummy, V_lin_dummy = get_sat_bounds(sat_dummy, linear_meta)
     L_oth_dummy, V_oth_dummy = get_sat_bounds(sat_dummy, other_meta)
 
@@ -246,11 +228,14 @@ def solve_two_phase(
 
     # Non-finite inputs (eg for 1/0 from invert_for_mixing) are routed to the
     # dummy values so the solver never sees them the lane is then flagged
-    # invalid
+    # invalid, when no crossing was reported route the targets to a trivial solution
+    # to have the newton converge immediatly
     inputs_finite = jnp.isfinite(linear_norm) & jnp.isfinite(other_norm)
-    route_dummy = is_inactive | jnp.logical_not(inputs_finite)
-    safe_linear_norm = jnp.where(route_dummy, dummy_linear_norm, linear_norm)
-    safe_other_norm = jnp.where(route_dummy, dummy_other_norm, other_norm)
+    route_dummy = (
+        is_inactive | jnp.logical_not(inputs_finite) | jnp.logical_not(crossed)
+    )
+    safe_linear_norm = pick(route_dummy, dummy_linear_norm, linear_norm)
+    safe_other_norm = pick(route_dummy, dummy_other_norm, other_norm)
 
     args = (safe_linear_norm, safe_other_norm, s_linear)
     # well_posed=False (least-squares) for both the forward Newton and its
@@ -296,7 +281,8 @@ def solve_two_phase(
 
     in_solver_range = (T_final >= eos.T_triple) & (T_final < saturation.T_crit)
     is_biphasic_flag = (
-        success
+        crossed
+        & success
         & inputs_finite
         & in_solver_range
         & well_posed
@@ -309,3 +295,40 @@ def solve_two_phase(
         T_final,
         clamp_quality(x_final, slack),
     )
+
+
+def _provide_guess_and_flag_for_third_case(
+    residual, saturation, T_dummy, linear_norm, other_norm, s_linear
+):
+
+    T_min_scan = jnp.asarray(saturation.T_min)
+    # s is a decreasing function of T
+    s_scan = jnp.linspace(0.0, saturation.s_of_T(T_min_scan), TOL.caps.n_seed_scan)
+
+    scan_args = (linear_norm, other_norm, s_linear)
+    r_scan = jnp.asarray(
+        jax.vmap(lambda t: residual(t, scan_args))(saturation.T_of_s(s_scan))
+    )
+    r_scan = pick(jnp.isfinite(r_scan), r_scan, jnp.inf)
+
+    crosses = (r_scan[:-1] * r_scan[1:]) <= 0.0
+    k = jnp.argmax(crosses)
+
+    r_k = r_scan[k]
+    r_kp1 = r_scan[k + 1]
+    s_k = s_scan[k]
+    s_kp1 = s_scan[k + 1]
+
+    # using a linear interpolation allows to greatly improve the guess
+    # interpolates on s for reliability close to the critical point
+    s_interp = pick(
+        r_k < r_kp1,
+        jnp.interp(0.0, jnp.array([r_k, r_kp1]), jnp.array([s_k, s_kp1])),
+        jnp.interp(0.0, jnp.array([r_kp1, r_k]), jnp.array([s_kp1, s_k])),
+    )
+    T_interp = saturation.T_of_s(s_interp)
+
+    T_guess = pick(crosses.any(), T_interp, T_dummy)
+    T_guess = pick(jnp.isfinite(T_guess), T_guess, T_dummy)
+
+    return jax.lax.stop_gradient(T_guess), crosses.any()
