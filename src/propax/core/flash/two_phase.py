@@ -215,7 +215,7 @@ def solve_two_phase(
     sat_dummy = saturation.state_T(T_dummy)
 
     T_guess, crossed = _provide_guess_and_flag_for_third_case(
-        residual, saturation, T_dummy, linear_norm, other_norm, s_linear
+        residual, saturation, other_meta, T_dummy, linear_norm, other_norm, s_linear
     )
 
     # filler for non-finite lanes; the spline answers, no equilibrium
@@ -298,21 +298,26 @@ def solve_two_phase(
 
 
 def _provide_guess_and_flag_for_third_case(
-    residual, saturation, T_dummy, linear_norm, other_norm, s_linear
+    residual, saturation, other_meta, T_dummy, linear_norm, other_norm, s_linear
 ):
 
     T_min_scan = jnp.asarray(saturation.T_min)
     # s is a decreasing function of T
     s_scan = jnp.linspace(0.0, saturation.s_of_T(T_min_scan), TOL.caps.n_seed_scan)
+    T_scan = saturation.T_of_s(s_scan)
 
     scan_args = (linear_norm, other_norm, s_linear)
-    r_scan = jnp.asarray(
-        jax.vmap(lambda t: residual(t, scan_args))(saturation.T_of_s(s_scan))
-    )
+    r_scan = jnp.asarray(jax.vmap(lambda t: residual(t, scan_args))(T_scan))
     r_scan = pick(jnp.isfinite(r_scan), r_scan, jnp.inf)
 
+    # where the branches meet the residual has no lever rule and an arbitrary
+    # sign, so a crossing touching such a point is taken only if no other exists
+    L_other, V_other = get_sat_bounds(jax.vmap(saturation.state_T)(T_scan), other_meta)
+    guarded = jnp.abs(V_other - L_other) < TOL.acc.lever_denom_atol
+
     crosses = (r_scan[:-1] * r_scan[1:]) <= 0.0
-    k = jnp.argmax(crosses)
+    clean = crosses & jnp.logical_not(guarded[:-1] | guarded[1:])
+    k = pick(clean.any(), jnp.argmax(clean), jnp.argmax(crosses))
 
     r_k = r_scan[k]
     r_kp1 = r_scan[k + 1]
