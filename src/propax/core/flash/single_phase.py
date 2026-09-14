@@ -457,8 +457,7 @@ def _solve_along_isobar(
 # gives both as one 2x2 solve on the EOS Jacobian,
 # there's no need to write painful layer by layer
 # differentiation
-@partial(jax.custom_jvp, nondiff_argnums=(0, 1))
-def _nested_root(
+def _nested_root_primal(
     key: str,
     scale: float,
     eos: HelmholtzEOS,
@@ -470,6 +469,9 @@ def _nested_root(
 ) -> Array:
     T_sol = _solve_along_isobar(eos, saturation, key, scale, lo, hi, P, y)
     return jnp.stack([_density_at_TP(eos, saturation, T_sol, P), jnp.asarray(T_sol)])
+
+
+_nested_root = jax.custom_jvp(_nested_root_primal, nondiff_argnums=(0, 1))
 
 
 @_nested_root.defjvp

@@ -92,8 +92,7 @@ def get_bisect_core(max_steps, rtol, atol):
     object: `jax.jit` keys its cache on identity.
     """
 
-    @partial(jax.custom_jvp, nondiff_argnums=(0,))
-    def _bisect_core(func, lower, upper, args):
+    def _bisect_primal(func, lower, upper, args):
         sign_lo_init = jnp.sign(func(lower, args))
         # the endpoints' sign product decides whether a root is bracketed at
         # all; without it the width test below reports success on any interval
@@ -130,6 +129,8 @@ def get_bisect_core(max_steps, rtol, atol):
         width = final_hi - final_lo
 
         return sol, width, bracket
+
+    _bisect_core = jax.custom_jvp(_bisect_primal, nondiff_argnums=(0,))
 
     @_bisect_core.defjvp
     def _through_the_root(func, primals, tangents):

@@ -112,13 +112,13 @@ def fill_ghost(arr_x1, arr_x2, f, dx1, dx2, dx1dx2, ok):
     grown = ok.copy()
     out = [a.copy() for a in (f, dx1, dx2, dx1dx2)]
     for tgt, src, sx, sy in steps:
-        take = (
+        take = (  # (n1-1, n2)
             ~ok[tgt] & ok[src] & ~grown[tgt]
         )  # a node is modified only if non valid or not already a grown one
         if not take.any():
             continue
 
-        m = take[..., None]
+        m = take[..., None]  # (n1-1, n2, 1)
         out[0][tgt] = np.where(m, f[src] + dx1[src] * sx + dx2[src] * sy, out[0][tgt])
         out[1][tgt] = np.where(m, dx1[src] + dx1dx2[src] * sy, out[1][tgt])
         out[2][tgt] = np.where(m, dx2[src] + dx1dx2[src] * sx, out[2][tgt])
