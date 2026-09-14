@@ -7,12 +7,38 @@ on:
   workflow_dispatch:
 
 jobs:
-  check:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --python 3.13 --extra test --extra coolprop --extra build
+
+      - name: Lint
+        run: uv run --no-sync ruff check .
+
+      - name: Format
+        run: uv run --no-sync ruff format --check .
+
+      - name: Types
+        run: uv run --no-sync pyright
+
+  tests:
+    name: py${{ matrix.python-version }} · x64=${{ matrix.x64 }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        include:
+          # test in both 32bits and 64bits precison
+          - { python-version: "3.13", x64: "1" }
+          - { python-version: "3.13", x64: "0" }
 
     steps:
       - uses: actions/checkout@v4
@@ -27,14 +53,10 @@ jobs:
           uv sync --python ${{ matrix.python-version }}
           --extra test --extra coolprop --extra build
 
-      - name: Lint
-        run: uv run ruff check .
-
-      - name: Format
-        run: uv run ruff format --check .
-
-      - name: Types
-        run: uv run pyright
+      - name: Show the resolved python stack
+        run: uv pip list | grep -iE '^(jax|jaxlib|lineax|equinox|optimistix) '
 
       - name: Tests
-        run: uv run pytest -q
+        env:
+          PROPAX_TEST_X64: ${{ matrix.x64 }}
+        run: uv run --no-sync pytest -q

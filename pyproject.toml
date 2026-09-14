@@ -31,7 +31,7 @@ classifiers = [
 ]
 dependencies = [
   "equinox>=0.13.2",
-  "jax>=0.8.1,<0.9", # equinox/jax compat, see diffrax#717 for the lower bound
+  "jax>=0.8.1", 
   "jaxtyping>=0.2.36",
   "lineax>=0.0.7",
   "numpy>=2.0",
