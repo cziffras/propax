@@ -151,7 +151,7 @@ propax/
     generic/          one module per correlation family
   utils/
     numerics.py      
-    solvers.py        the bracketed Newton and bisection
+    solvers.py        the bracketed Newton
     exact/            offline, mpmath: critical point and superancillary fit
     make_utils/       offline: CoolProp -> a definition file
     build_utils/      offline: a definition file -> interpolation tables

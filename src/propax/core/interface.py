@@ -20,24 +20,25 @@ from .config import (
 )
 from .flash import (
     add_transport,
-    both_natural_pair,
     call_interp,
     check_supported,
     fill_result_dict,
     is_degenerate_pair,
-    is_nested_pair,
     is_saturated_pair,
-    one_dim_known_var,
-    properties_Tx,
+    mixture_state,
     supported_pairs,
-    undefine_two_phase,
 )
-from .flash.single_phase import solve_1d, solve_nested
+from .flash.single_phase import solve_single_phase
 from .flash.two_phase import solve_saturated, solve_two_phase
 from .interp import BicubicInterpolation
 from .saturation import Superancillary
 
 logger = logging.getLogger(__name__)
+
+
+def _dtype():
+    """The float the active precision computes in."""
+    return jnp.float64 if jax.config.read("jax_enable_x64") else jnp.float32
 
 
 class Interface(eqx.Module):
@@ -224,21 +225,12 @@ class Interface(eqx.Module):
             be placed at all. Plain floats are cast on the way in, so this
             costs no retrace.
         """
-
-        if jax.config.read("jax_enable_x64"):
-            dtype = jnp.float64
-        else:
-            dtype = jnp.float32
-
-        tvar1 = ThermoVar(name1)
-        tvar2 = ThermoVar(name2)
-        x1 = jnp.asarray(val1, dtype=dtype)
-        x2 = jnp.asarray(val2, dtype=dtype)
+        dtype = _dtype()
         return self._phase_of(
-            tvar1=tvar1,
-            val1=x1,
-            tvar2=tvar2,
-            val2=x2,
+            tvar1=ThermoVar(name1),
+            val1=jnp.asarray(val1, dtype=dtype),
+            tvar2=ThermoVar(name2),
+            val2=jnp.asarray(val2, dtype=dtype),
         )
 
     @eqx.filter_jit
@@ -292,9 +284,7 @@ class Interface(eqx.Module):
                 jnp.array(PhaseID.UNKNOWN),
             )
 
-        final_phase_id = jax.lax.cond(is_biphasic, under_the_dome, off_the_dome, None)
-
-        return final_phase_id
+        return jax.lax.cond(is_biphasic, under_the_dome, off_the_dome, None)
 
     def fast_flash(
         self,
@@ -326,11 +316,7 @@ class Interface(eqx.Module):
             FileNotFoundError: if no table has been built for this pair. The
                 message names the command that builds it.
         """
-        if jax.config.read("jax_enable_x64"):
-            dtype = jnp.float64
-        else:
-            dtype = jnp.float32
-
+        dtype = _dtype()
         tvar1 = ThermoVar(name1)
         tvar2 = ThermoVar(name2)
         if frozenset({tvar1, tvar2}) not in self.table_for_pair:
@@ -339,9 +325,12 @@ class Interface(eqx.Module):
                 f"them with `python -m propax.build_tables {self.fluid_name}`, or use "
                 "`flash`, which needs none."
             )
-        x1 = jnp.asarray(val1, dtype=dtype)
-        x2 = jnp.asarray(val2, dtype=dtype)
-        state = self._interp(tvar1=tvar1, val1=x1, tvar2=tvar2, val2=x2)
+        state = self._interp(
+            tvar1=tvar1,
+            val1=jnp.asarray(val1, dtype=dtype),
+            tvar2=tvar2,
+            val2=jnp.asarray(val2, dtype=dtype),
+        )
         return self._derive_from_state(state, dtype=dtype, transport=transport)
 
     def _derive_from_state(self, state, dtype, transport: bool):
@@ -361,35 +350,16 @@ class Interface(eqx.Module):
         x = jnp.clip(safe_div(v - v_L, v_V - v_L), 0.0, 1.0)
 
         one = add_transport(
+            self.viscosity, self.conductivity, self.props_rhoT(rho, T), transport
+        )
+        two = add_transport(
             self.viscosity,
             self.conductivity,
-            self.props_rhoT(rho, T),
+            mixture_state(self.saturation, jnp.where(two_phase, T, self.eos.T_crit), x),
             transport,
         )
-        two = properties_Tx(
-            self.saturation,
-            jnp.where(two_phase, T, self.eos.T_crit),
-            x,
-        )
-        two_dict = two.mix.replace({ThermoVar.P: two.P, ThermoVar.T: two.T})
-        two_dict = add_transport(
-            self.viscosity,
-            self.conductivity,
-            two_dict,
-            transport,
-        )
-
-        # cv and cp are not defined for a two-phase mixture (T is pinned while
-        # heat is added), fill result dict fills their slots with nans for avoidind
-        # crashing a simulation a downstream user could route nans to 0.0 or use
-        # jnp.nan_to_num : https://docs.jax.dev/en/latest/_autosummary/jax.numpy.nan_to_num.html
-        # this is done for clarifying code's intents
-        undefined = {ThermoVar.CVMASS.internal_key, ThermoVar.CPMASS.internal_key}
-        nan = jnp.asarray(jnp.nan, dtype=dtype)
         merged = {
-            k: jnp.where(two_phase, nan if k in undefined else two_dict[k], v)
-            if (k in two_dict or k in undefined)
-            else v
+            k: jnp.where(two_phase, two[k], v) if k in two else v
             for k, v in one.items()
         }
         return PropertyMap(fill_result_dict(merged, dtype=dtype, transport=transport))
@@ -431,21 +401,12 @@ class Interface(eqx.Module):
             ValueError: if the pair is not one propax can solve, or if
                 `transport` is asked of a fluid that has no correlation.
         """
-        if jax.config.read("jax_enable_x64"):
-            dtype = jnp.float64
-        else:
-            dtype = jnp.float32
-
-        tvar1 = ThermoVar(name1)
-        tvar2 = ThermoVar(name2)
-
-        x1 = jnp.asarray(val1, dtype=dtype)
-        x2 = jnp.asarray(val2, dtype=dtype)  # jit and vmap here
+        dtype = _dtype()
         return self._flash_impl(
-            tvar1=tvar1,
-            val1=x1,
-            tvar2=tvar2,
-            val2=x2,
+            tvar1=ThermoVar(name1),
+            val1=jnp.asarray(val1, dtype=dtype),
+            tvar2=ThermoVar(name2),
+            val2=jnp.asarray(val2, dtype=dtype),
             monophasic=monophasic,
             transport=transport,
             dtype=dtype,
@@ -473,30 +434,20 @@ class Interface(eqx.Module):
                 "correlation. Use transport=False for EOS-only properties."
             )
 
+        def filled(result: PropertyMap) -> dict:
+            with_transport = add_transport(
+                self.viscosity, self.conductivity, result, transport
+            )
+            return fill_result_dict(with_transport, dtype=dtype, transport=transport)
+
         # A quality read against P or T needs no solver at all: the saturation
         # state is the answer and the lever rule places the mixture on it, leaves
         # before any other machinery is built
         if is_saturated_pair(tvar1, tvar2):
             ok, T_sat, x = solve_saturated(
-                self.eos,
-                self.saturation,
-                tvar1,
-                val1,
-                tvar2,
-                val2,
+                self.eos, self.saturation, tvar1, val1, tvar2, val2
             )
-            props = properties_Tx(self.saturation, T_sat, x)
-            result = props.mix.replace({ThermoVar.P: props.P, ThermoVar.T: props.T})
-            result = add_transport(
-                self.viscosity,
-                self.conductivity,
-                undefine_two_phase(result, dtype),
-                transport,
-            )
-            return (
-                PropertyMap(fill_result_dict(result, dtype=dtype, transport=transport)),
-                ok,
-            )
+            return PropertyMap(filled(mixture_state(self.saturation, T_sat, x))), ok
 
         # (P, T) admits no two-phase state, and `monophasic` forces the
         # single-phase solver (python static)
@@ -516,131 +467,29 @@ class Interface(eqx.Module):
                 is_inactive=jnp.array(False),
             )
 
-        # (D, T) are the EOS' own variables: outside the dome there is nothing
-        # to solve, the state is the input. Inside it, `solve_two_phase` case 2
-        # already answers from T alone, so this branch only serves the
-        # single-phase side.
-        # /!\ It converges without an initial guess, so those pairs need
-        # no interpolation table at all
-        both_natural = both_natural_pair(tvar1, tvar2)
+        one_status, rho, T = solve_single_phase(
+            self.eos, self.saturation, tvar1, val1, tvar2, val2, is_inactive=is_biphasic
+        )
+        one_result = filled(self.props_rhoT(rho, T))
 
-        # P fixes an isobar and the caloric variable is monotone along it, so
-        # these are bracketable in two stages rather than needing a seed
-        # /!\ It converges without an initial guess, so those pairs need
-        # no interpolation table at all
-        nested = is_nested_pair(tvar1, tvar2)
-
-        # When D or T is an input, only the other member of (rho, T) is
-        # unknown: use the bracketed 1D solve
-        # /!\ It converges without an initial guess, so those pairs need
-        # no interpolation table at all
-        known_var = one_dim_known_var(tvar1, tvar2)
-
-        def _one_phase():
-            if both_natural:
-                rho = val1 if tvar1 == ThermoVar.D else val2
-                T = val1 if tvar1 == ThermoVar.T else val2
-                # the bracketed solvers below report `is_inactive` as a failure;
-                # this branch runs no solver, so it has to say so on its own
-                op_status = (
-                    jnp.isfinite(rho)
-                    & jnp.isfinite(T)
-                    & (rho > 0.0)
-                    & jnp.logical_not(is_biphasic)
-                )
-            elif nested:
-                if tvar1 == ThermoVar.P:
-                    val_P, tvar_other, val_other = val1, tvar2, val2
-                else:
-                    val_P, tvar_other, val_other = val2, tvar1, val1
-                op_status, rho, T = solve_nested(
-                    self.eos,
-                    self.saturation,
-                    tvar_other,
-                    val_P,
-                    val_other,
-                    is_inactive=is_biphasic,
-                )
-            else:
-                # every remaining pair is bracketed: `check_supported` at the
-                # top has already turned away the ones that are not
-                if known_var is None:
-                    raise ValueError(f"{tvar1}/{tvar2} is not a bracketed pair")
-                if tvar1 == known_var:
-                    val_known, tvar_other, val_other = val1, tvar2, val2
-                else:
-                    val_known, tvar_other, val_other = val2, tvar1, val1
-                op_status, rho, T = solve_1d(
-                    self.eos,
-                    self.saturation,
-                    known_var,
-                    val_known,
-                    tvar_other,
-                    val_other,
-                    is_inactive=is_biphasic,
-                )
-            one_phase_primary_props = self.props_rhoT(rho, T)
-
-            one_phase_result = add_transport(
-                self.viscosity,
-                self.conductivity,
-                one_phase_primary_props,
-                transport,
-            )
-
-            filled = fill_result_dict(
-                one_phase_result,
-                dtype=dtype,
-                transport=transport,
-            )
-            return filled, op_status
-
-        def _two_phase():
-            tp_status = is_biphasic
-            # Outside the dome the shared solve above does not converge, and its
-            # (T, x) are meaningless route them to a physical in-dome point
-            T_mid = jnp.asarray((self.eos.T_triple + self.eos.T_crit) / 2.0)
-            T_biphase = jnp.where(is_biphasic, T_two_phase, T_mid)
-            x_biphase = jnp.where(is_biphasic, x_two_phase, 0.5)
-            two_phase_primary_props = properties_Tx(
-                self.saturation,
-                # we are only interested in the equilibrium properties
-                T_biphase,
-                x_biphase,
-            )  # captures T and x from closure
-
-            two_phase_result = two_phase_primary_props.mix.replace(
-                {
-                    ThermoVar.P: two_phase_primary_props.P,
-                    ThermoVar.T: two_phase_primary_props.T,
-                }
-            )
-            two_phase_result = add_transport(
-                self.viscosity,
-                self.conductivity,
-                undefine_two_phase(two_phase_result, dtype),
-                transport,
-            )
-
-            filled = fill_result_dict(
-                two_phase_result,
-                dtype=dtype,
-                transport=transport,
-            )
-            return filled, tp_status
-
-        one_result, one_status = _one_phase()
-        # the two-phase answer stands wherever no single-phase root was reached,
-        # and every branch reports `is_inactive` as a failure: that is the dome
-        # no physical single root can exist (metastable optima)
-        is_biphasic = is_biphasic & jnp.logical_not(one_status)
         if degenerate_pair:  # static: the two-phase graph is never built
             return PropertyMap(one_result), one_status
 
-        two_result, two_status = _two_phase()
+        # the two-phase answer stands wherever no single-phase root was reached,
+        # that is the dome no physical single root can exist (metastable optima)
+        is_biphasic = is_biphasic & jnp.logical_not(one_status)
+
+        # Outside the dome the shared solve above does not converge, and its
+        # (T, x) are meaningless: route them to a physical in-dome point
+        T_mid = jnp.asarray((self.eos.T_triple + self.eos.T_crit) / 2.0)
+        two_result = filled(
+            mixture_state(
+                self.saturation,
+                jnp.where(is_biphasic, T_two_phase, T_mid),
+                jnp.where(is_biphasic, x_two_phase, 0.5),
+            )
+        )
         final_result = jax.tree.map(
             lambda tp, op: jnp.where(is_biphasic, tp, op), two_result, one_result
         )
-        exit_code = jnp.where(is_biphasic, two_status, one_status)
-
-        return PropertyMap(final_result), exit_code
+        return PropertyMap(final_result), is_biphasic | one_status

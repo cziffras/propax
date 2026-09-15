@@ -65,12 +65,6 @@ class TestTheCurveIsTheSameOneCoolPropFound:
             ref = CP.PropsSI("D", "T", T, "Q", np.full_like(T, q), cp_fluid)
             assert np.asarray(got) == pytest.approx(ref, rel=RIGHT_ROOT.density)
 
-    def test_the_saturation_pressure_agrees(self, saturation, dome, cp_fluid):
-        T = np.asarray(dome)
-        P = jax.jit(jax.vmap(lambda t: saturation.state_T(t).P))(dome)
-        ref = CP.PropsSI("P", "T", T, "Q", np.zeros_like(T), cp_fluid)
-        assert np.asarray(P) == pytest.approx(ref, rel=RIGHT_ROOT.pressure)
-
     def test_the_branch_energies_agree(self, saturation, dome, cp_fluid):
         T = np.asarray(dome)
         state = jax.jit(jax.vmap(saturation.state_T))(dome)

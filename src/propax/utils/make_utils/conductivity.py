@@ -16,12 +16,6 @@ OS_DEFAULTS = dict(
     nu=0.63, gamma=1.239, R0=1.03, GAMMA=0.0496, zeta0=1.94e-10, qD=2.0e9
 )
 
-# used when CoolProp's fluid file publishes no simplified_Olchowy_Sengers block
-# at all (propax then adds a generic enhancement CoolProp itself omits)
-GENERIC_OS_CRITICAL = dict(
-    nu=0.63, gamma=1.2415, Gamma=0.052, chi_0=1.5e-10, RD=1.01, qd_inv=5.0e-10
-)
-
 
 SLOT_COND_DILUTE = {"eta0_and_poly", "ratio_of_polynomials"}
 SLOT_COND_RESIDUAL = {"polynomial_and_exponential", "polynomial"}

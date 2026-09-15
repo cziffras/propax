@@ -11,7 +11,7 @@ from ...core.config import (  # noqa: E402
     TableSpec,
     ThermoVar,
 )
-from ...core.flash.results import properties_Tx  # noqa: E402
+from ...core.flash.results import mixture_state  # noqa: E402
 from ...core.flash.two_phase import solve_two_phase  # noqa: E402
 from ...core.saturation import Superancillary  # noqa: E402
 from .helpers import _mapped  # noqa: E402
@@ -31,12 +31,7 @@ def _mixture_value(saturation: Superancillary, var: ThermoVar, T, x):
     """One output of the mixture at (T_sat, quality)."""
     if var == ThermoVar.Q:
         return jnp.asarray(x)
-    state = properties_Tx(saturation, T, x)
-    if var == ThermoVar.T:
-        return state.T
-    if var == ThermoVar.P:
-        return state.P
-    return state.mix[var]
+    return mixture_state(saturation, T, x)[var]
 
 
 def _solve_dome_state(cfg: TableSpec, X1_phys, X2_phys, saturation: Superancillary):

@@ -3,7 +3,7 @@ from typing import Mapping
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from .._state import PropertyMap, SaturationResult, TxResult
+from .._state import PropertyMap, SaturationResult
 from ..config import ThermoVar
 from ..saturation import Superancillary
 
@@ -21,20 +21,23 @@ RESULT_KEYS = {  # keys output by flash
 }
 
 
-def properties_Tx(saturation: Superancillary, T: Array, x: Array) -> TxResult:
+def mixture_state(saturation: Superancillary, T: Array, x: Array) -> PropertyMap:
     sat = saturation.state_T(T)
-
-    v_L = 1.0 / sat.L[ThermoVar.D]
-    v_V = 1.0 / sat.V[ThermoVar.D]
-    rho_mix = 1.0 / ((1.0 - x) * v_L + x * v_V)
-
-    mix = {
-        ThermoVar.D: rho_mix,
-        ThermoVar.U: (1.0 - x) * sat.L[ThermoVar.U] + x * sat.V[ThermoVar.U],
-        ThermoVar.H: (1.0 - x) * sat.L[ThermoVar.H] + x * sat.V[ThermoVar.H],
-        ThermoVar.S: (1.0 - x) * sat.L[ThermoVar.S] + x * sat.V[ThermoVar.S],
-    }
-    return TxResult(mix=PropertyMap(mix), L=sat.L, V=sat.V, x=x, T=T, P=sat.P)
+    v = (1.0 - x) / sat.L[ThermoVar.D] + x / sat.V[ThermoVar.D]
+    undefined = jnp.full_like(v, jnp.nan)
+    return PropertyMap(
+        {
+            ThermoVar.D: 1.0 / v,
+            **{
+                var: (1.0 - x) * sat.L[var] + x * sat.V[var]
+                for var in (ThermoVar.U, ThermoVar.H, ThermoVar.S)
+            },
+            ThermoVar.P: sat.P,
+            ThermoVar.T: T,
+            ThermoVar.CVMASS: undefined,
+            ThermoVar.CPMASS: undefined,
+        }
+    )
 
 
 def add_transport(viscosity, conductivity, result: PropertyMap, transport: bool):
@@ -49,16 +52,6 @@ def add_transport(viscosity, conductivity, result: PropertyMap, transport: bool)
     )
 
 
-# Heat capacities have no value in a two-phase state, CoolProp uses the lever rule
-# to fail silently, propax return NaNs
-UNDEFINED_TWO_PHASE = (ThermoVar.CVMASS, ThermoVar.CPMASS)
-
-
-def undefine_two_phase(result: PropertyMap, dtype) -> PropertyMap:
-    nan = jnp.asarray(jnp.nan, dtype=dtype)
-    return result.replace({k: nan for k in UNDEFINED_TWO_PHASE})
-
-
 def fill_result_dict(partial_result: Mapping, dtype, transport: bool = False) -> dict:
     """
     Missing entries are padded with a finite 0.0 rather than NaN: an unused NaN
@@ -66,12 +59,17 @@ def fill_result_dict(partial_result: Mapping, dtype, transport: bool = False) ->
     in the cotangent).
 
     That is for absent entries (those which could not be solved); one that exists and has no
-    value says so with NaN (see `undefine_two_phase`).
+    value says so with NaN (see `mixture_state`).
     """
     pad_val = jnp.asarray(0.0, dtype=dtype)
     keys = RESULT_KEYS["common"] + RESULT_KEYS["single_phase"]
     keys = keys + RESULT_KEYS["transport"] if transport else keys
     return {key: partial_result.get(key.internal_key, pad_val) for key in keys}
+
+
+def as_mixed(tvar: ThermoVar, value):
+    """The form the lever rule is linear in: specific volume for a density."""
+    return 1.0 / value if tvar.spec.invert_for_mixing else value
 
 
 def get_sat_bounds(sat_state: SaturationResult, tvar: ThermoVar):
@@ -81,13 +79,10 @@ def get_sat_bounds(sat_state: SaturationResult, tvar: ThermoVar):
     if tvar.spec.sat_key_unique:
         # `tvar.value` is the CoolProp key; SaturationResult carries the same
         # names, see _state
-        val = getattr(sat_state, tvar.value)
-        return (1.0 / val, 1.0 / val) if tvar.spec.invert_for_mixing else (val, val)
+        value = as_mixed(tvar, getattr(sat_state, tvar.value))
+        return value, value
 
     if tvar.spec.sat_key_L and tvar.spec.sat_key_V:
-        L_val, V_val = sat_state.L[tvar], sat_state.V[tvar]
-        if tvar.spec.invert_for_mixing:
-            return 1.0 / L_val, 1.0 / V_val
-        return L_val, V_val
+        return as_mixed(tvar, sat_state.L[tvar]), as_mixed(tvar, sat_state.V[tvar])
 
     raise ValueError(f"Saturation metadata missing for {tvar.value}")
