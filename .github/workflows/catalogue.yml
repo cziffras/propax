@@ -107,6 +107,7 @@ jobs:
       # folder in propax, we count the number of fluids and keep
       # track of fluids whose generation has failed
         run: |
+          rm -f src/propax/fluids/data/*.json
           cp collected/*.json src/propax/fluids/data/
           ls -1 src/propax/fluids/data/*.json | wc -l
           uv run python -m propax.make_fluid --list-convertible > wanted.txt
