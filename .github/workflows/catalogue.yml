@@ -1,5 +1,7 @@
 name: Catalogue
 
+# The catalogue is to be ran manually 
+
 # The saturation fit costs minutes per fluid and the fluids are independent, so
 # the catalogue is generated once, here, and committed. Regenerating locally is
 # never required: `make_fluid <Name>` is for checking one, or changing one.
@@ -20,6 +22,10 @@ permissions:
 jobs:
   plan:
     runs-on: ubuntu-latest
+    # data/ holds what this run replaces, possibly under an older schema: the
+    # registry must not read it while the new files are made
+    env:
+      PROPAX_FLUID_DIR: ${{ github.workspace }}/.no-fluids
     outputs:
       shards: ${{ steps.plan.outputs.shards }}
     steps:
@@ -44,6 +50,8 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    env:
+      PROPAX_FLUID_DIR: ${{ github.workspace }}/.no-fluids
     strategy:
       fail-fast: false
       matrix:
