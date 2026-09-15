@@ -4,6 +4,7 @@ from .._state import PropertyMap
 from ..config import ThermoVar
 from ..domain import is_two_phase
 from ..interp import BicubicInterpolation
+from .results import as_mixed
 
 
 def pass_pair_args_to_table(
@@ -40,6 +41,13 @@ def call_interp(interpolators, pair_to_table_map, tvar1, val1, tvar2, val2):
         # branch is chosen by a lookup; outside the mixture table the
         # interpolant returns NaN and two_phase is false
         dome_vec = pass_pair_args_to_table(dome, tvar1, val1, tvar2, val2)
+        # stored in the form the lever rule is linear in, `as_mixed` turns it back
+        dome_vec = jnp.stack(
+            [
+                as_mixed(ThermoVar(n), dome_vec[i])
+                for i, n in enumerate(dome.output_names)
+            ]
+        )
         two_phase = is_two_phase(dome_vec[-1], jnp.asarray(True))
         result_vec = jnp.where(two_phase, dome_vec[:-1], result_vec)
 

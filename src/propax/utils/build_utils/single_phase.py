@@ -11,13 +11,7 @@ from ...core.flash.single_phase import solve_single_phase  # noqa: E402
 
 
 def make_single_phase_solver(eos, sat_mod, cfg: TableSpec):
-    """Vectorised (x1, x2) -> (ok, rho, T) for one table's axes.
-
-    Metastable states are wanted here and are what comes back: these are the
-    single-phase solvers, so under the dome they follow the branch's
-    continuation rather than the equilibrium. The dome table holds the
-    equilibrium values, and the runtime picks between the two.
-    """
+    """Vectorised (x1, x2) -> (ok, rho, T) for one table's axes."""
     v1, v2 = cfg.x_axis.variable, cfg.y_axis.variable
     check_supported(v1, v2)
     active = jnp.array(False)

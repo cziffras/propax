@@ -353,7 +353,8 @@ class BicubicInterpolation(eqx.Module):
 
         # a cell touching a node with no physical state rests on a fill value;
         # NaN says so instead of returning a plausible number and the solvers seed
-        # from a mid-domain fallback when they see it
+        # from a mid-domain fallback when they see it, this mostly happens by the
+        # edges of the table
         if self.unreachable is not None:
             out = jnp.where(jnp.any(self.unreachable.array[corners]), jnp.nan, out)
         return jnp.where(outside, jnp.nan, out)

@@ -9,7 +9,6 @@ import numpy as np
 jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp  # noqa: E402
-from scipy.interpolate import griddata  # noqa: E402
 
 from ...core.config import (  # noqa: E402
     TABLE_REGISTRY,
@@ -17,19 +16,20 @@ from ...core.config import (  # noqa: E402
     ThermoVar,
     get_table_path,
 )
+from ...core.flash.single_phase import solve_single_phase  # noqa: E402
+from ...core.flash.two_phase import solve_two_phase  # noqa: E402
 from ...core.interp import BicubicInterpolation  # noqa: E402
 from .dome import (  # noqa: E402
-    _dome_derivatives,
+    _GHOST_QUALITY,
     _dome_values,
     _solve_dome_state,
+    _stored_value,
     dome_axis_bounds,
 )
 from .helpers import (  # noqa: E402
     _get_fluid_modules,
-    _make_input_fn,
     _make_outputs_fn,
     _mapped,
-    fill_ghost,
 )
 from .single_phase import (  # noqa: E402
     make_single_phase_solver,
@@ -40,61 +40,33 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-def _analytic_first_derivatives(f1, f2, outputs_fn, rho_flat, T_flat):
+def _node_derivatives(value, X1_phys, X2_phys) -> np.ndarray:
+    """d(value)/d(x1) and d(value)/d(x2) at every node, (n1, n2, C, 2).
+
+    `value(x1, x2)` solves the state and reads its outputs, so the derivative is
+    the solver's own implicit one, the same `flash` carries.
     """
-    ``d(out)/d(x1)|x2 and d(out)/d(x2)|x1`` at a node whose (rho, T) is already known
-
-    'out' being a function that returns ``(f1(rho, T), f2(rho, T)) = (x1, x2)`` (input variables
-    are obviously output values of the EOS)
-
-    this method computes ``d(out)/d(x1)|x2`` and ``d(out)/d(x2)|x1`` at single-phase nodes
-    via the implicit function theorem:
-
-    ``J_out(rho, T) (d(out)/d(rho, T)) @ inv(J_inputs(rho, T)) ((d(x1, x2)/d(rho, T)^-1))``
-
-    The chain rule yields:
-
-    ``d(out)/d(x1, x2) = d(out)/d(rho, T) * d(rho, T)/d(x1, x2) (= d(x1, x2)/d(rho, T)^-1))``
-
-    NOTE :
-    - Both Jacobians come from `jacfwd`, so the tangents are exact to machine
-    precision. A Hermite spline is extremely sensitive to the precision of its
-    first order derivatives nodes.
-    - Single-phase only. Inside the dome (rho, T) does not describe the state and
-    J_in is meaningless thus `_dome_derivatives` applies the same theorem through
-    (T_sat, x) instead.
-    """
-
-    def node(rho, T):
-        y = jnp.stack([rho, T])
-        J_in = jax.jacfwd(lambda z: jnp.stack([f1(z[0], z[1]), f2(z[0], z[1])]))(y)
-        J_out = jax.jacfwd(lambda z: outputs_fn(z[0], z[1]))(y)
-        return J_out @ jnp.linalg.inv(J_in)  # (C, 2)
-
-    return _mapped(node, rho_flat, T_flat)
+    d1, d2 = _mapped(
+        jax.jacfwd(value, argnums=(0, 1)), X1_phys.ravel(), X2_phys.ravel()
+    )
+    return np.stack([d1, d2], axis=-1).reshape(*X1_phys.shape, -1, 2)
 
 
 def make_field_ctx(table_config, eos, viscosity, conductivity, saturation, fluid_name):
-    x1, x2 = table_config.x_axis.variable, table_config.y_axis.variable
     ctx = {
-        "f1": _make_input_fn(eos, x1),
-        "f2": _make_input_fn(eos, x2),
         "outputs_fn": _make_outputs_fn(
             eos, viscosity, conductivity, table_config.outputs
         ),
     }
     ctx["outputs_vfn"] = jax.jit(jax.vmap(ctx["outputs_fn"]))
-    # every pair needs the saturation module now, not only those holding a
-    # natural variable: the (P, x) solve reads T_sat(P) to split its isobar
-    ctx["sat_mod"] = saturation
     ctx["solver"] = make_single_phase_solver(eos, saturation, table_config)
     return ctx
 
 
 def _all_finite(*fields) -> np.ndarray:
     """Nodes whose EVERY channel of EVERY field is finite.
-    Without it `fill_ghost` extrapolates a neighbour from a potentially infinite
-    derivative and corrupts the output of finite fields.
+    The others are masked, so a lookup in a cell touching one returns NaN
+    instead of a value built on a non-finite corner.
     """
     ok = np.ones(fields[0].shape[:2], dtype=bool)
     for f in fields:
@@ -158,11 +130,9 @@ def solve_field(
 
     Returns (table_f, rho_grid, T_grid, ok_grid).
 
-    The single-phase branch is kept everywhere it exists, metastable extension
-    included. Those dome states sit below the EOS surface and are physically
-    spurious, but that branch alone has no kink.
-
-    The equilibrium values live in their own table (`build_dome_table`).
+    Only stable single-phase states converge, a node inside the dome or out of
+    the domain is left NaN and masked. The equilibrium values live in their own
+    table (`build_dome_table`).
     """
     outputs = table_config.outputs
     n1, n2 = X1_phys.shape
@@ -182,17 +152,10 @@ def solve_field(
     if bad.any() and warn_unconverged:
         warnings.warn(
             f"{int(bad.sum())} nodes of {table_config.name} have no converged "
-            "solution (out-of-domain corners are expected); values are filled "
-            "from the nearest valid node."
+            "solution (out-of-domain corners and the dome are expected); they "
+            "are masked."
         )
-    x1_flat, x2_flat = X1_phys.ravel(), X2_phys.ravel()
-    for idx in range(len(outputs)):
-        channel = table_f[:, :, idx]
-        channel[bad] = np.nan
-        flat = channel.ravel()
-        if (~np.isfinite(flat)).any():
-            flat = fill_nan_nearest(flat, x1_flat, x2_flat)
-        table_f[:, :, idx] = flat.reshape(n1, n2)
+    table_f[bad] = np.nan
 
     return table_f, rho_grid, T_grid, ok_grid
 
@@ -212,7 +175,6 @@ def build_vectorized_table(
     )
 
     x1_cfg, x2_cfg = table_config.x_axis, table_config.y_axis
-    outputs = table_config.outputs
     n1, n2 = x1_cfg.n_points, x2_cfg.n_points
 
     apply_log_x1 = x1_cfg.spacing == "log"
@@ -229,13 +191,14 @@ def build_vectorized_table(
     arr_x2_phys = np.exp(arr_x2_internal) if apply_log_x2 else arr_x2_internal
     X1_phys, X2_phys = np.meshgrid(arr_x1_phys, arr_x2_phys, indexing="ij")
 
-    f1 = _make_input_fn(eos, x1_cfg.variable)
-    f2 = _make_input_fn(eos, x2_cfg.variable)
-    outputs_fn = _make_outputs_fn(eos, viscosity, conductivity, outputs)
+    if ctx is None:
+        ctx = make_field_ctx(
+            table_config, eos, viscosity, conductivity, saturation, processed_fluid_name
+        )
 
     logger.info(f"Building {table_config.name} for {fluid_name} ({n1}x{n2})...")
 
-    table_f, rho_grid, T_grid, ok_grid = solve_field(
+    table_f, _, _, ok_grid = solve_field(
         table_config,
         X1_phys,
         X2_phys,
@@ -248,37 +211,23 @@ def build_vectorized_table(
     )
     logger.info(f"  single-phase converged: {ok_grid.mean():.1%}")
 
-    # derivatives: analytic (implicit function theorem) in the single
-    # phase, finite differences across the dome and at repaired nodes
-    table_dx1 = np.zeros((n1, n2, len(outputs)))
-    table_dx2 = np.zeros((n1, n2, len(outputs)))
-    table_dx1dx2 = np.zeros((n1, n2, len(outputs)))
-
-    derivs = np.array(
-        _analytic_first_derivatives(
-            f1, f2, outputs_fn, rho_grid.ravel(), T_grid.ravel()
+    def node_value(a1, a2):
+        _, rho, T = solve_single_phase(
+            eos, saturation, x1_cfg.variable, a1, x2_cfg.variable, a2, jnp.array(False)
         )
-    ).reshape(n1, n2, len(outputs), 2)
+        return ctx["outputs_fn"](rho, T)
 
-    for idx in range(len(outputs)):
-        dx1_phys = derivs[:, :, idx, 0]
-        dx2_phys = derivs[:, :, idx, 1]
-        table_dx1[:, :, idx] = dx1_phys * X1_phys if apply_log_x1 else dx1_phys
-        table_dx2[:, :, idx] = dx2_phys * X2_phys if apply_log_x2 else dx2_phys
-        table_dx1dx2[:, :, idx] = np.gradient(
-            table_dx1[:, :, idx], arr_x2_internal, axis=1
-        )
+    # the cross derivative is a finite difference of dx1 along x2
+    derivs = _node_derivatives(node_value, X1_phys, X2_phys)
+
+    table_dx1 = derivs[..., 0] * X1_phys[..., None] if apply_log_x1 else derivs[..., 0]
+    table_dx2 = derivs[..., 1] * X2_phys[..., None] if apply_log_x2 else derivs[..., 1]
+    # a failed node's derivatives are finite but meaningless: NaN keeps them out
+    # of its neighbours' cross derivative, which `_all_finite` then masks
+    table_dx1 = np.where(ok_grid[..., None], table_dx1, np.nan)
+    table_dx1dx2 = np.gradient(table_dx1, arr_x2_internal, axis=1)
 
     reachable = ok_grid & _all_finite(table_f, table_dx1, table_dx2, table_dx1dx2)
-    table_f, table_dx1, table_dx2, table_dx1dx2, reachable = fill_ghost(
-        arr_x1_internal,
-        arr_x2_internal,
-        table_f,
-        table_dx1,
-        table_dx2,
-        table_dx1dx2,
-        reachable,
-    )
 
     return _save_table(
         tables_base_path / processed_fluid_name / table_config.name,
@@ -345,18 +294,24 @@ def build_dome_table(
         [np.asarray(values[var]).reshape(n1, n2) for var in outputs], axis=-1
     )
 
-    derivs = np.asarray(
-        _dome_derivatives(
-            table_config,
-            outputs,
+    def node_value(a1, a2):
+        _, T, q = solve_two_phase(
+            eos,
             saturation,
-            jnp.asarray(np.nan_to_num(T_sat).ravel()),
-            jnp.asarray(np.nan_to_num(x_q).ravel()),
+            x1_cfg.variable,
+            a1,
+            x2_cfg.variable,
+            a2,
+            jnp.array(False),
+            slack=_GHOST_QUALITY,
         )
-    ).reshape(n1, n2, len(outputs), 2)
+        return jnp.stack([_stored_value(saturation, var, T, q) for var in outputs])
+
+    derivs = _node_derivatives(node_value, X1_phys, X2_phys)
 
     table_dx1 = derivs[..., 0] * X1_phys[..., None] if log1 else derivs[..., 0]
     table_dx2 = derivs[..., 1] * X2_phys[..., None] if log2 else derivs[..., 1]
+    table_dx1 = np.where(solved[..., None], table_dx1, np.nan)
     table_dx1dx2 = np.gradient(table_dx1, arr_x2, axis=1)
 
     reachable = solved & _all_finite(table_f, table_dx1, table_dx2, table_dx1dx2)
@@ -364,15 +319,6 @@ def build_dome_table(
     table_f, table_dx1, table_dx2, table_dx1dx2 = (
         np.nan_to_num(a, posinf=0.0, neginf=0.0)
         for a in (table_f, table_dx1, table_dx2, table_dx1dx2)
-    )
-    table_f, table_dx1, table_dx2, table_dx1dx2, reachable = fill_ghost(
-        arr_x1,
-        arr_x2,
-        table_f,
-        table_dx1,
-        table_dx2,
-        table_dx1dx2,
-        reachable,
     )
 
     return _save_table(
@@ -387,24 +333,6 @@ def build_dome_table(
         ~reachable,
         output_names=outputs,
     )
-
-
-def fill_nan_nearest(
-    flat_data: np.ndarray, x1_flat: np.ndarray, x2_flat: np.ndarray
-) -> np.ndarray:
-    mask_valid = np.isfinite(flat_data)
-    if mask_valid.all():
-        return flat_data
-    if not mask_valid.any():
-        return flat_data
-    points_valid = np.column_stack((x1_flat[mask_valid], x2_flat[mask_valid]))
-    values_valid = flat_data[mask_valid]
-    points_missing = np.column_stack((x1_flat[~mask_valid], x2_flat[~mask_valid]))
-    filled_values = griddata(
-        points_valid, values_valid, points_missing, method="nearest"
-    )
-    flat_data[~mask_valid] = filled_values
-    return flat_data
 
 
 def fluid_table_registry(fluid_name: str) -> list:
@@ -461,8 +389,8 @@ def fluid_table_registry(fluid_name: str) -> list:
 
 def _probe_error(table_config, tbl, ax1, ax2, node_bad, truth_at, along_x1: bool):
     """
-    A probe is dropped only when a bracketing node is a ghost: the interpolant
-    rests there on an extrapolated value, so the error would say nothing.
+    A probe is dropped when a bracketing node is masked: the lookup returns NaN
+    there, so there is no error to measure.
     """
     log1 = table_config.x_axis.spacing == "log"
     log2 = table_config.y_axis.spacing == "log"
@@ -484,8 +412,14 @@ def _probe_error(table_config, tbl, ax1, ax2, node_bad, truth_at, along_x1: bool
         )
     ).reshape(truth.shape)
 
-    flat = truth.reshape(-1, truth.shape[-1])
-    den = np.maximum(np.abs(truth), 1e-3 * np.maximum(np.ptp(flat, axis=0), 1e-30))
+    # the quality a dome table carries last only picks the branch, and turns
+    # singular at the critical point: the target is held on the outputs alone
+    channels = len(table_config.outputs)
+    truth, pred = truth[..., :channels], pred[..., :channels]
+    flat = truth.reshape(-1, channels)
+    # failed probes are NaN: the scale is the range of the others
+    span = np.nanmax(flat, axis=0) - np.nanmin(flat, axis=0)
+    den = np.maximum(np.abs(truth), 1e-3 * np.maximum(span, 1e-30))
     err = np.max(np.abs(pred - truth) / den, axis=-1)
     return np.where(ok & ~bad_stencil, err, np.nan)
 
@@ -555,7 +489,12 @@ def build_adaptive_table(
             e2 = _probe_error(table_config, tbl, ax1, ax2, bad_n, truth_at, False)
 
             def frac(e, ax):
-                return np.nan_to_num(np.nanmean((e > target).astype(float), axis=ax))
+                # a masked probe measures nothing: it neither passes nor misses
+                missed = np.where(np.isfinite(e), e > target, np.nan)
+                return np.nan_to_num(np.nanmean(missed, axis=ax))
+
+            if not (np.isfinite(e1).any() or np.isfinite(e2).any()):
+                raise RuntimeError(f"{label}: no probe could be measured")
 
             m1, m2 = frac(e1, 1) > quantile, frac(e2, 0) > quantile
             logger.info(
@@ -581,6 +520,11 @@ def build_adaptive_table(
                 )
                 break
             ax1, ax2 = n1, n2
+        else:
+            logger.warning(
+                f"  {label}: {max_rounds} rounds done, target {target:g} not met "
+                "everywhere"
+            )
         return path
 
     path = refine(

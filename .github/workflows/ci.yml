@@ -18,7 +18,7 @@ jobs:
           enable-cache: true
 
       - name: Install
-        run: uv sync --python 3.13 --extra test --extra coolprop --extra build
+        run: uv sync --python 3.13 --extra test --extra coolprop
 
       - name: Lint
         run: uv run --no-sync ruff check .
@@ -51,7 +51,7 @@ jobs:
       - name: Install
         run: >
           uv sync --python ${{ matrix.python-version }}
-          --extra test --extra coolprop --extra build
+          --extra test --extra coolprop
 
       - name: Show the resolved python stack
         run: uv pip list | grep -iE '^(jax|jaxlib|lineax|equinox|optimistix) '

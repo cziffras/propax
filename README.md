@@ -27,11 +27,10 @@ pip install propax
 The runtime is JAX and nothing else of substance. The 126 fluids that convert
 today ship with the package.
 
-Two extras are for development only, and the runtime imports neither:
+One extra is for development only, and the runtime never imports it:
 
 ```
 pip install "propax[coolprop]"   # CoolProp + mpmath, to transcribe new fluids
-pip install "propax[build]"      # scipy, to build interpolation tables
 ```
 
 ## Usage

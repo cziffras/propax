@@ -106,7 +106,7 @@ def solve_two_phase(
         # a saturation state the module flags as invalid must not silently
         # become a converged two-phase answer
         is_valid_flag = in_range & is_two_phase(
-            x, sat.is_valid, slack=TOL.acc.quality_slack
+            x, sat.is_valid, slack=max(slack, TOL.acc.quality_slack)
         )
         return is_valid_flag, sat.T, clamp_quality(x, slack)
 

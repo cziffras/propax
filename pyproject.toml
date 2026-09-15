@@ -49,9 +49,6 @@ urls = {repository = "https://github.com/cziffras/propax"}
 version = "0.1.1"
 
 [project.optional-dependencies]
-build = [
-  "scipy>=1.11"
-]
 coolprop = [
   "coolprop>=6.6.0",
   "mpmath>=1.3"

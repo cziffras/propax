@@ -11,7 +11,7 @@ from ...core.config import (  # noqa: E402
     TableSpec,
     ThermoVar,
 )
-from ...core.flash.results import mixture_state  # noqa: E402
+from ...core.flash.results import as_mixed, mixture_state  # noqa: E402
 from ...core.flash.two_phase import solve_two_phase  # noqa: E402
 from ...core.saturation import Superancillary  # noqa: E402
 from .helpers import _mapped  # noqa: E402
@@ -32,6 +32,10 @@ def _mixture_value(saturation: Superancillary, var: ThermoVar, T, x):
     if var == ThermoVar.Q:
         return jnp.asarray(x)
     return mixture_state(saturation, T, x)[var]
+
+
+def _stored_value(saturation: Superancillary, var: ThermoVar, T, x):
+    return as_mixed(var, _mixture_value(saturation, var, T, x))
 
 
 def _solve_dome_state(cfg: TableSpec, X1_phys, X2_phys, saturation: Superancillary):
@@ -76,7 +80,7 @@ def _dome_values(outputs, saturation: Superancillary, T_sat, x):
     """The mixture's outputs at every node the solve resolved."""
 
     def node(T, q):
-        return jnp.stack([_mixture_value(saturation, var, T, q) for var in outputs])
+        return jnp.stack([_stored_value(saturation, var, T, q) for var in outputs])
 
     resolved = np.isfinite(T_sat).ravel() & np.isfinite(x).ravel()
     vals = np.asarray(
@@ -89,27 +93,6 @@ def _dome_values(outputs, saturation: Superancillary, T_sat, x):
     # a node no mixture describes carries no value, and says so
     vals = np.where(resolved[:, None], vals, np.nan)
     return {var: vals[:, i] for i, var in enumerate(outputs)}
-
-
-def _dome_derivatives(cfg, outputs, saturation: Superancillary, T_sat, x):
-    """d(out)/d(axes) at dome nodes, via (T_sat, x) as internal variables.
-
-    Same shape as the single-phase `J_out @ inv(J_in)`.
-    """
-    axes = (cfg.x_axis.variable, cfg.y_axis.variable)
-
-    def jacobian(vars_, z):
-        return jax.jacfwd(
-            lambda w: jnp.stack(
-                [_mixture_value(saturation, v, w[0], w[1]) for v in vars_]
-            )
-        )(z)
-
-    def node(T, q):
-        z = jnp.stack([T, q])
-        return jacobian(outputs, z) @ jnp.linalg.inv(jacobian(axes, z))  # (C, 2)
-
-    return _mapped(node, jnp.asarray(T_sat), jnp.asarray(x))
 
 
 def dome_axis_bounds(cfg, saturation: Superancillary):
