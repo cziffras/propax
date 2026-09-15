@@ -3,10 +3,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from ...fluids.schema import SaturationSuperancillary
@@ -15,84 +13,49 @@ from .critical import solve_critical_point
 from .curve import make_node_solver, saturation_walk
 from .superancillary import ChebyshevChannel
 
-FITTED = ("rho_L", "rho_V")
-"""Only saturated densities are stored as channels, other saturated
-quantities are rederived using the EOS.
-"""
-
-_INDEX = {name: i for i, name in enumerate(FITTED)}
-"""Which component of the fitted pair each stored channel is."""
-
-DERIVED = ("P_sat", "h_L", "h_V", "s_L", "s_V", "u_L", "u_V")
-
-CHANNELS = FITTED + DERIVED
-
-_BRANCH = {
-    "P_sat": "rho_V",  # the vapour side used to retrieve P_sat
-    "h_L": "rho_L",
-    "h_V": "rho_V",
-    "s_L": "rho_L",
-    "s_V": "rho_V",
-    "u_L": "rho_L",
-    "u_V": "rho_V",
-}
-_QUANTITY = {
-    "P_sat": "P",
-    "h_L": "h",
-    "h_V": "h",
-    "s_L": "s",
-    "s_V": "s",
-    "u_L": "u",
-    "u_V": "u",
-}
+_LIQUID, _VAPOUR = 0, 1
+"""Components of the fitted pair. Only saturated densities are stored, every
+other saturated quantity is the EOS read at them, that improves consistency and
+code simplicity without costing much in terms of speed."""
 
 
 @dataclass(frozen=True)
 class SaturationFit:
-    """Just a container for saturation fitted chebyshev channels."""
+    """The fitted saturation channels, both anchored on T."""
 
     T_crit: float
     T_min: float
-    T_max: float
     rho_max_mol: float
     pair: ChebyshevChannel
-    cuts: dict
-    log_components: tuple = ()
-    """Components of `pair` fitted on their logarithm; see `ChebyshevPieces`."""
-
-    @property
-    def s_min(self) -> float:
-        return float(np.sqrt(max(1.0 - self.T_max / self.T_crit, 0.0)))
-
-    @property
-    def s_max(self) -> float:
-        return float(np.sqrt(1.0 - self.T_min / self.T_crit))
+    """T -> (rho_L, ln rho_V), in s = sqrt(1 - T/T_crit)."""
+    pressure: ChebyshevChannel
+    """T <-> ln P_sat, in theta = 1 - T/T_crit."""
 
     def __repr__(self) -> str:
-        p = self.pair
-        stored = len(p.pieces) * (p.degree + 1) * p.n_components
+        stored = sum(
+            len(c.pieces) * (c.degree + 1) * c.n_components
+            for c in (self.pair, self.pressure)
+        )
         return (
             f"<SaturationFit T {self.T_min:.3f}..{self.T_crit:.3f} K, "
-            f"{stored} coefficients, {len(DERIVED)} channels derived>"
+            f"{stored} coefficients>"
         )
 
     def to_block(self):
-        """Layout in storage for a superancillary."""
-        pieces = self.pair.pieces
-        coeffs = np.stack([np.atleast_2d(np.asarray(p.coeffs).T).T for p in pieces])
-        cuts = [_boundaries(g) for g in self.pair.segments]
-        width = max(len(c) for c in cuts)
+
+        def _layout(channel: ChebyshevChannel, log_components) -> dict:
+            pieces = channel.pieces
+            return dict(
+                edges=[p.xmin for p in pieces] + [pieces[-1].xmax],
+                coeffs=np.stack([np.atleast_2d(p.coeffs.T).T for p in pieces]).tolist(),
+                log_components=list(log_components),
+            )
+
         return SaturationSuperancillary(
             T_min=self.T_min,
-            T_max=self.T_max,
             rho_max_mol=self.rho_max_mol,
-            edges=[p.xmin for p in pieces] + [pieces[-1].xmax],
-            coeffs=coeffs.tolist(),
-            # padded such that two components turning over a different
-            # number of times still have to share one array
-            cuts=[c + [c[-1]] * (width - len(c)) for c in cuts],
-            derived_cuts={n: _boundaries(g) for n, g in self.cuts.items()},
-            log_components=list(self.log_components),
+            densities=_layout(self.pair, (_VAPOUR,)),  # type: ignore[arg-type]
+            pressure=_layout(self.pressure, (0,)),  # type: ignore[arg-type]
         )
 
     def save(self, path: Path | str) -> Path:
@@ -105,68 +68,6 @@ class SaturationFit:
         return path
 
 
-def _boundaries(segments) -> list:
-    return [segments[0].xmin] + [s.xmax for s in segments]
-
-
-def fit_saturation(
-    eos,
-    T_crit: float,
-    T_min: float,
-    T_max: float,
-    sample: Callable[[np.ndarray], np.ndarray],
-    props: Callable[[np.ndarray, np.ndarray], dict],
-    degree: Optional[int] = None,
-    log_components: tuple = (),
-) -> SaturationFit:
-    """Sample the equilibrium and fit it. The slow half, and the only half here.
-
-    `sample` returns the saturated pair as one (n, 2) block: both densities come
-    from one solve per node and share one dyadic tree, so neither is sampled
-    twice nor split differently from the other.
-    """
-    T_crit, T_min, T_max = float(T_crit), float(T_min), float(T_max)
-    s_min = float(np.sqrt(max(1.0 - T_max / T_crit, 0.0)))
-    s_max = float(np.sqrt(1.0 - T_min / T_crit))
-
-    log_components = tuple(int(c) for c in log_components)
-
-    def fitted(s_nodes):
-        y = np.asarray(sample(s_nodes), dtype=float)
-        for c in log_components:
-            y[..., c] = np.log(y[..., c])
-        return y
-
-    pair = ChebyshevChannel(fitted, s_min, s_max, degree)
-
-    def unlog(y):
-        y = np.array(y, dtype=float, copy=True)
-        for c in log_components:
-            y[..., c] = np.exp(y[..., c])
-        return y
-
-    def derived_fn(name: str) -> Callable[[np.ndarray], np.ndarray]:
-        branch, quantity = _BRANCH[name], _QUANTITY[name]
-
-        def f(s):
-            s_arr = np.atleast_1d(np.asarray(s, dtype=float))
-            T = T_crit * (1.0 - s_arr**2)
-            rho = np.atleast_1d(unlog(np.asarray(pair(s_arr)))[..., _INDEX[branch]])
-            return np.asarray(props(rho, T)[quantity], dtype=float)
-
-        return f
-
-    cuts = {
-        name: ChebyshevChannel(derived_fn(name), s_min, s_max, pair.degree).segments[0]
-        for name in DERIVED
-    }
-    rho_L_triple = float(
-        unlog(np.asarray(pair(np.asarray([s_max]))))[0, _INDEX["rho_L"]]
-    )
-    rho_max_mol = density_ceiling(eos, rho_L_triple)
-    return SaturationFit(T_crit, T_min, T_max, rho_max_mol, pair, cuts, log_components)
-
-
 def _require_x64() -> None:
     if not jax.config.read("jax_enable_x64"):
         raise RuntimeError(
@@ -176,39 +77,38 @@ def _require_x64() -> None:
         )
 
 
-def from_eos(
-    eos,
-    degree: Optional[int] = None,
-    T_max: Optional[float] = None,
-) -> SaturationFit:
+def from_eos(eos) -> SaturationFit:
+    """Sample the equilibrium and fit it, from the triple point to the critical one.
+
+    Every channel reads the same equilibrium solves, keyed by the temperature
+    anchoring them. Both densities share one dyadic tree in s for consistency, ln P_sat has its
+    own in theta (more precise when evaluated in theta).
+    """
     _require_x64()
-    props_eos = jax.jit(jax.vmap(eos.props_rhoT))
-
     crit = solve_critical_point(eos)
-    curve = saturation_walk(eos, crit)
-    solve = make_node_solver(eos, crit, curve)
+    walk = saturation_walk(eos, crit)
+    solve = make_node_solver(eos, crit, walk)
 
-    T_min = curve.T_min
-    T_crit = float(crit.T_crit)
-    T_top = float(T_max) if T_max is not None else float(crit.T_crit)
+    T_crit, T_min = float(crit.T_crit), walk.T_min
+    theta_max = 1.0 - T_min / T_crit
+    s_max = float(np.sqrt(theta_max))
 
-    def sample(s_nodes: np.ndarray) -> np.ndarray:
-        T = T_crit * (1.0 - np.atleast_1d(np.asarray(s_nodes, dtype=float)) ** 2)
-        rho_L, rho_V = solve(np.clip(T, T_min, T_top))
-        return np.stack([np.asarray(rho_L), np.asarray(rho_V)], axis=-1)
+    def sample(T) -> np.ndarray:
+        T = np.clip(np.atleast_1d(np.asarray(T)), T_min, T_crit)
+        return np.stack(solve(T), axis=-1)
 
-    def props(rho: np.ndarray, T: np.ndarray) -> dict:
-        """The EOS at a density the fit has just returned."""
-        out = props_eos(jnp.asarray(rho), jnp.asarray(T))
-        return {k: np.asarray(out[k]) for k in ("P", "h", "s", "u")}
+    def densities(s):
+        rho = sample(T_crit * (1.0 - np.asarray(s) ** 2))[..., :2]
+        # rho_V spans decades down to the triple point, see `ChebyshevPieces`
+        rho[..., _VAPOUR] = np.log(rho[..., _VAPOUR])
+        return rho
 
-    return fit_saturation(
-        eos,
-        T_crit,
-        T_min,
-        T_top,
-        sample,
-        props,
-        degree,
-        log_components=(_INDEX["rho_V"],),
-    )
+    def log_P(theta):
+        return np.log(sample(T_crit * (1.0 - np.asarray(theta)))[..., 2])
+
+    pair = ChebyshevChannel(densities, 0.0, s_max)
+    pressure = ChebyshevChannel(log_P, 0.0, theta_max)
+
+    rho_L_triple = float(pair(s_max)[_LIQUID])
+    rho_max_mol = density_ceiling(eos, rho_L_triple)
+    return SaturationFit(T_crit, T_min, rho_max_mol, pair, pressure)

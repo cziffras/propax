@@ -85,11 +85,8 @@ class Accuracies(PrecisionScaled):
     """The polishing Newton of the 1D solve. Tests the step, not the residual."""
 
     #  the saturation line
-    sat_rtol: float = 1e-14
-    """T_sat(rho), which sets a bracket's end."""
-
-    sat_inversion_rtol: float = 1e-13
-    """T_sat(P). Carries the answer, not a seed."""
+    channel_edge: float = 1e-12
+    """How far past its ends a fitted channel still answers, as a relative tolerance."""
 
     sat_edge_nudge: float = 1e-12
     """How far off the saturation line a bracket endpoint is pushed, relative."""

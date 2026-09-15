@@ -30,9 +30,6 @@ class Precision:
     """Guard digits carried whatever theta is, for the round-off that has
     nothing to do with the critical point."""
 
-    sample_guard: int = 10
-    """Digits a sampled node carries beyond what the fit reads of it."""
-
     def newton_tol(self, dps: int) -> mp.mpf:
         """Relative step at which a Newton run at `dps` digits stops."""
         return mp.mpf(10) ** (-(dps - self.newton_headroom))
@@ -47,11 +44,6 @@ class Precision:
     def working_dps(self, theta) -> int:
         """The precision a saturated pair at this theta is actually solved at."""
         return self.dps + self.guard_digits(theta)
-
-    @property
-    def sample_dps(self) -> int:
-        """Precision for a node the fit will read to `tol`."""
-        return int(-mp.log10(mp.mpf(self.tol))) + self.sample_guard
 
 
 PRECISION = Precision()

@@ -1,4 +1,5 @@
 import hashlib
+from functools import partial
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -7,8 +8,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from propax.utils.numerics import pick
-from propax.utils.solvers import bisect
+from propax.utils.numerics import pick, safe_div
+from propax.utils.solvers import newton_loop
 from propax.utils.types import jaxFloat
 
 from .tolerances import TOL
@@ -94,18 +95,9 @@ class ChebyshevPieces(eqx.Module):
         static=True
     )  # (n_pieces + 1,) piece boundaries determined through dydadic splitting
     coeffs: _Const = eqx.field(static=True)  # (n_pieces, degree + 1)
-    # polynomial roots with a sign change, define the the number of monotone segments
-    cuts: _Const = eqx.field(static=True)  # (C, n_segments + 1)
 
     log_components: Tuple[int, ...] = eqx.field(static=True, default=())
     """Components stored as log(value), and exponentiated on the way out.
-
-    A channel crossing decades -- rho_V spans ten of them, from 1e-8 at the
-    triple point to rho_c -- cannot be certified on its value: `tail_ratio`
-    weighs the last coefficients against the first, so it measures error
-    against the channel's *largest* scale, and where the function is tiny an
-    absolute error negligible there is a relative error of percents. On the
-    logarithm the same certificate reads relative error at every point.
     """
 
     @classmethod
@@ -113,7 +105,6 @@ class ChebyshevPieces(eqx.Module):
         cls,
         edges,
         coeffs,
-        cuts,
         log_components: Tuple[int, ...] = (),
         dtype=jnp.float64,
     ) -> "ChebyshevPieces":
@@ -122,8 +113,6 @@ class ChebyshevPieces(eqx.Module):
         - `edges` is (n_pieces + 1,) in x the number of pieces is determined by
         an accuracy criterion by the dyadic splitting process
         - `coeffs` is (n_pieces, degree + 1, C)
-        - `cuts` is (C, n_segments + 1), padded with the domain's own end where one
-        component turns over less often than another.
 
         NOTE :
         The abscissa stays float64 whatever `dtype` the coefficients are stored at,
@@ -132,12 +121,19 @@ class ChebyshevPieces(eqx.Module):
         return cls(
             edges=_Const(np.asarray(edges, dtype=np.float64)),
             coeffs=_Const(np.asarray(coeffs, dtype=dtype)),
-            cuts=_Const(np.asarray(cuts, dtype=np.float64)),
             log_components=tuple(int(c) for c in log_components),
         )
 
     def __call__(self, x: jaxFloat) -> jax.Array:
-        """Clenshaw on the piece holding x. Returns (C,)."""
+        """The channel at x. Returns (C,)."""
+        out = self._stored(x)
+        if self.log_components:
+            idx = jnp.asarray(self.log_components)
+            out = out.at[idx].set(jnp.exp(out[idx]))
+        return out
+
+    def _stored(self, x: jaxFloat) -> jax.Array:
+        """Clenshaw iteration on the piece holding x, log components left as logs. Returns (C,)."""
         edges, coeffs = self.edges.array, self.coeffs.array
         x = jnp.asarray(x)
         i = jnp.clip(
@@ -152,37 +148,73 @@ class ChebyshevPieces(eqx.Module):
         b1 = b2 = jnp.zeros_like(coeffs[0, 0])
         for k in range(coeffs.shape[1] - 1, 0, -1):
             b1, b2 = 2.0 * t * b1 - b2 + coeffs[i, k], b1
-        out = coeffs[i, 0] + t * b1 - b2
-        if self.log_components:
-            idx = jnp.asarray(self.log_components)
-            out = out.at[idx].set(jnp.exp(out[idx]))
-        return out
+        return coeffs[i, 0] + t * b1 - b2
 
-    def invert(self, y: jaxFloat, component: int = 0) -> jax.Array:
-        """Every x with channel(x)[component] = y, one slot per monotone segment.
-
-        Fixed shape, NaN where that segment does not reach y.
+    def invert(self, value: jaxFloat, component: int | jax.Array = 0) -> jax.Array:
         """
+        Every stored component (rho_L, rho_V, ln P_sat) is monotone in T, so the
+        whole channel is one bracket. `component` may be traced; a log component
+        is inverted on its logarithm, where it is stored.
+        """
+        return _abscissa_of(self, component, jnp.asarray(value))
 
-        # useful for non monotonic components
-        cuts = self.cuts.array[component]
-        y = jnp.asarray(y)
 
-        def on_segment(k):
-            lo, hi = cuts[k], cuts[k + 1]
-            root, converged = bisect(
-                lambda x, _: self(x)[component] - y,
-                lo,
-                hi,
-                None,
-                max_steps=TOL.caps.bisect_steps,
-                rtol=TOL.acc.sat_inversion_rtol,
-                atol=TOL.acc.bisect_atol,
-            )
-            # a padded segment is a point: no bracket, hence no root
-            return pick(converged & (hi > lo), root, jnp.nan)
+def _as_stored(channel: ChebyshevPieces, component, value):
+    """`value` as the component is stored: its logarithm for a log component."""
+    is_log = jnp.isin(component, jnp.asarray(channel.log_components, dtype=int))
+    return pick(is_log, jnp.log(pick(is_log, value, 1.0)), value)
 
-        return jnp.stack([on_segment(k) for k in range(int(self.cuts.shape[1]))])
+
+@partial(jax.custom_jvp, nondiff_argnums=(0,))
+def _abscissa_of(channel: ChebyshevPieces, component, value):
+    x_lo, x_hi = channel.edges.array[0], channel.edges.array[-1]
+    target = _as_stored(channel, component, value)
+
+    def stored(x):
+        return channel._stored(x)[component]
+
+    def residual(x, aim):
+        stored_x, slope = jax.jvp(stored, (x,), (jnp.ones_like(x),))
+        return stored_x - aim, slope
+
+    at_lo, at_hi = stored(x_lo), stored(x_hi)
+    low, high = jnp.minimum(at_lo, at_hi), jnp.maximum(at_lo, at_hi)
+    edge = TOL.acc.channel_edge * jnp.maximum(
+        jnp.maximum(jnp.abs(low), jnp.abs(high)), 1.0
+    )
+    in_range = (target >= low - edge) & (target <= high + edge)
+    held = jnp.clip(target, low, high)
+    chord = jnp.clip(safe_div(held - at_lo, at_hi - at_lo), 0.0, 1.0)
+    seed = x_lo + chord * (x_hi - x_lo)
+    # a lane the channel does not reach is handed the value at its seed,
+    # so it stops at once instead of running every step of the batch
+    aim = pick(in_range, held, stored(seed))
+    x, _ = newton_loop(
+        residual,
+        x_lo,
+        x_hi,
+        aim,
+        x0=seed,
+        max_steps=TOL.caps.newton_steps,
+        rtol=TOL.acc.newton_rtol,
+    )
+    return pick(in_range, x, jnp.nan)
+
+
+@_abscissa_of.defjvp
+def _abscissa_of_jvp(channel: ChebyshevPieces, primals, tangents):
+    component, value = primals
+    _, value_dot = tangents
+    x = _abscissa_of(channel, component, value)
+    found = jnp.isfinite(x)
+    # implicit function theorem: dx = d(stored value) / (d stored / dx),
+    # the numerator carrying the 1/value of a log component
+    _, target_dot = jax.jvp(
+        lambda v: _as_stored(channel, component, v), (value,), (value_dot,)
+    )
+    at = pick(found, x, channel.edges.array[0])
+    slope = jax.grad(lambda x_: channel._stored(x_)[component])(at)
+    return x, pick(found, safe_div(target_dot, slope), 0.0)
 
 
 class BicubicInterpolation(eqx.Module):

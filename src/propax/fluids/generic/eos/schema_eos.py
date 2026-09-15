@@ -3,7 +3,7 @@ Multiparameter Helmholtz EOS schema: the ideal and residual Helmholtz parts, the
 saturation superancillary, and the fluid constants.
 """
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -97,31 +97,21 @@ class ResidualHelmholtz(BaseModel):
         return self
 
 
-class SaturationSuperancillary(BaseModel):
-    T_min: float  # K, the cold end the fit covers
-    T_max: float  # K
-
-    rho_max_mol: float
-    """mol/m3 at (T_min, P_max): the densest state the correlation claims.
-
-    It lives here rather than on the EOS because it is only defined against
-    the liquid branch -- below that branch the isotherm is the dome's own
-    loop, and P = P_max has roots there that mean nothing."""
+class ChebyshevLayout(BaseModel):
+    """One piecewise Chebyshev channel as stored."""
 
     edges: List[float]
-    """Piece boundaries in s, (n_pieces + 1,) ascending."""
+    """Piece boundaries in the channel's abscissa, (n_pieces + 1,) ascending."""
 
     coeffs: List[List[List[float]]]
     """(n_pieces, degree + 1, n_components), the Chebyshev coefficients."""
 
-    cuts: List[List[float]]
-    """(n_components, n_cuts) where each component turns over, so it inverts."""
-
-    derived_cuts: Dict[str, List[float]]
-    """The same, for each quantity read from the EOS rather than stored."""
-
     log_components: List[int] = Field(default_factory=list)
     """Components fitted on their logarithm, exponentiated on the way out."""
+
+    @property
+    def n_components(self) -> int:
+        return len(self.coeffs[0][0])
 
     @model_validator(mode="after")
     def _check_shapes(self):
@@ -129,18 +119,39 @@ class SaturationSuperancillary(BaseModel):
             raise ValueError("edges must have one more entry than coeffs has pieces")
         if any(b <= a for a, b in zip(self.edges, self.edges[1:])):
             raise ValueError("edges must be strictly ascending")
-        shapes = {(len(p), len(p[0])) for p in self.coeffs}
-        if len(shapes) != 1:
+        if len({(len(p), len(p[0])) for p in self.coeffs}) != 1:
             raise ValueError("every piece must carry the same (degree, component) grid")
-        (_, n_components) = shapes.pop()
-        if any(len(row) != n_components for p in self.coeffs for row in p):
+        if any(len(row) != self.n_components for p in self.coeffs for row in p):
             raise ValueError("ragged coefficient rows")
-        if len(self.cuts) != n_components:
-            raise ValueError("cuts must carry one row per component")
-        if len({len(row) for row in self.cuts}) != 1:
-            raise ValueError("cuts rows must be padded to a common length")
-        if any(not 0 <= c < n_components for c in self.log_components):
+        if any(not 0 <= c < self.n_components for c in self.log_components):
             raise ValueError("log_components must index a component")
+        return self
+
+
+class SaturationSuperancillary(BaseModel):
+    """The saturation curve, anchored on T.
+
+    T -> (rho_L, rho_V) in s = sqrt(1 - T/T_crit), where the densities leave the
+    critical point like sqrt(theta); T <-> P_sat in theta = 1 - T/T_crit, where
+    ln P_sat keeps a finite slope up to the critical point.
+    """
+
+    T_min: float  # K, the cold end the fit covers
+
+    rho_max_mol: float
+
+    densities: ChebyshevLayout
+    """T -> (rho_L, rho_V), in s."""
+
+    pressure: ChebyshevLayout
+    """T <-> ln P_sat, in theta."""
+
+    @model_validator(mode="after")
+    def _check_channels(self):
+        if self.densities.n_components != 2:
+            raise ValueError("densities must carry rho_L and rho_V")
+        if self.pressure.n_components != 1:
+            raise ValueError("pressure must carry P_sat alone")
         return self
 
 
