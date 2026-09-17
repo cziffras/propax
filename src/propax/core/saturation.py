@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Tuple
 
 import equinox as eqx
 import jax
@@ -7,12 +7,20 @@ from jaxtyping import Array
 
 from propax.fluids._registry import EQS_REGISTRY
 from propax.fluids.generic import HelmholtzEOS
-from propax.utils.solvers import bisect
+from propax.utils.numerics import pick
 
 from ._state import PropertyMap, SaturationResult
 from .config import ThermoVar
 from .interp import ChebyshevPieces
-from .tolerances import TOL
+
+
+def _pieces(layout, dtype) -> ChebyshevPieces:
+    return ChebyshevPieces.from_arrays(
+        layout.edges,
+        layout.coeffs,
+        tuple(layout.log_components),
+        dtype,
+    )
 
 
 class Superancillary(eqx.Module):
@@ -21,21 +29,28 @@ class Superancillary(eqx.Module):
     through the Clenshaw iteration, all construction process is made offline in the
     /exact module.
 
-    Two channels are stored, `rho_L` and `rho_V`, and every caloric quantity is
-    the EOS read at one of them so a lever rule closed against an EOS
-    evaluation cannot disagree with the endpoints it is closed on.
+    T anchors the curve and P is tied to it, so every entry reduces to a
+    temperature first:
 
-    The abscissa is s = sqrt(1 - T/T_crit): the saturated densities leave the
-    critical point like rho_c +/- B sqrt(theta), a branch point in T that no
-    polynomial resolves and an ordinary analytic function of s.
+        T  -> (rho_L, rho_V)    `rho_sat`, in s = sqrt(1 - T/T_crit)
+        P <-> T                 `P_sat`, in theta = 1 - T/T_crit
+
+    Every caloric quantity, and the pressure a state reports, is the EOS read at
+    the saturated densities, so a lever rule closed against an EOS evaluation
+    cannot disagree with the endpoints it is closed on. `P_sat` only locates T.
+
+    The densities leave the critical point like rho_c +/- B sqrt(theta), a branch
+    point in T that no polynomial resolves and an ordinary analytic function of
+    s. ln P_sat is smooth in T: in theta its slope stays finite, so it inverts
+    in a few steps up to the critical point.
     """
 
     eos: HelmholtzEOS
-    pair: ChebyshevPieces
-    """The saturated densities, (rho_L, rho_V) as the two components."""
+    rho_sat: ChebyshevPieces
+    """T -> (rho_L, rho_V), the two components, in s."""
 
-    cuts: Dict[str, Tuple[float, ...]] = eqx.field(static=True)
-    """Where each derived channel turns over, so it can be inverted."""
+    P_sat: ChebyshevPieces
+    """T <-> P_sat, stored as ln P_sat, in theta."""
 
     T_crit: float = eqx.field(static=True)
     T_min: float = eqx.field(static=True)
@@ -54,59 +69,49 @@ class Superancillary(eqx.Module):
         """
         return cls(
             eos=eos,
-            pair=ChebyshevPieces.from_arrays(
-                block.edges,
-                block.coeffs,
-                block.cuts,
-                tuple(block.log_components),
-                dtype,
-            ),
-            cuts={name: tuple(c) for name, c in block.derived_cuts.items()},
+            rho_sat=_pieces(block.densities, dtype),
+            P_sat=_pieces(block.pressure, dtype),
             T_crit=float(eos.T_crit),
             T_min=float(block.T_min),
             rho_max=float(block.rho_max_mol) * float(eos.molar_mass),
         )
 
     def s_of_T(self, T):
-        return jnp.sqrt(jnp.clip(1.0 - jnp.asarray(T) / self.T_crit, 0.0, None))
+        return jnp.sqrt(self.theta_of_T(T))
 
     def T_of_s(self, s):
-        return self.T_crit * (1.0 - jnp.asarray(s) ** 2)
+        return self.T_of_theta(jnp.asarray(s) ** 2)
+
+    def theta_of_T(self, T):
+        return jnp.clip(1.0 - jnp.asarray(T) / self.T_crit, 0.0, None)
+
+    def T_of_theta(self, theta):
+        return self.T_crit * (1.0 - jnp.asarray(theta))
 
     def densities(self, T):
-        """(rho_L, rho_V) at T. One Clenshaw, two components."""
-        pair = self.pair(self.s_of_T(T))
-        return pair[self.L], pair[self.V]
+        """T -> (rho_L, rho_V). One Clenshaw, two components."""
+        rho = self.rho_sat(self.s_of_T(T))
+        return rho[self.L], rho[self.V]
 
     def T_of_rho(self, rho) -> Tuple[Array, Array]:
-        """The temperature at which a density sits on the dome, and whether it
-        ever does.
+        """rho -> T on the dome, and whether the density ever sits on it.
 
-        Above rho_crit that is the liquid branch, below it the vapour one. Both
-        are monotone in T, so the whole curve is the bracket, and one Clenshaw
-        answers for the branch the density selects.
+        Above rho_crit that is the liquid branch, below it the vapour one.
         """
         rho = jnp.asarray(rho)
         branch = jnp.where(rho > self.eos.rho_crit_mass, self.L, self.V)
-        rho_L_cold, rho_V_cold = self.densities(self.T_min)
-        on_dome = (rho <= rho_L_cold) & (rho >= rho_V_cold)
+        s = self.rho_sat.invert(rho, branch)
+        on_dome = jnp.isfinite(s)
+        return self.T_of_s(pick(on_dome, s, 0.0)), on_dome
 
-        def gap(T, target):
-            return self.pair(self.s_of_T(T))[branch] - target
-
-        T_sat, converged = bisect(
-            gap,
-            jnp.asarray(self.T_min),
-            jnp.asarray(self.T_crit),
-            rho,
-            max_steps=TOL.caps.bisect_steps,
-            rtol=TOL.acc.sat_rtol,
-            atol=TOL.acc.bisect_atol,
-        )
-        return jnp.asarray(T_sat), on_dome & converged
+    def T_of_P(self, P) -> Tuple[Array, Array]:
+        """P -> T on the curve, and whether the pressure is ever saturated."""
+        theta = self.P_sat.invert(P, 0)
+        on_curve = jnp.isfinite(theta)
+        return self.T_of_theta(pick(on_curve, theta, 0.0)), on_curve
 
     def state_T(self, T) -> SaturationResult:
-        """Both saturated branches at T, and the pressure they share."""
+        """T -> both saturated branches, and the pressure they share."""
         T = jnp.asarray(T)
         valid = jax.lax.stop_gradient((T >= self.T_min) & (T <= self.T_crit))
         T_safe = jnp.clip(T, self.T_min, self.T_crit)
@@ -135,29 +140,15 @@ class Superancillary(eqx.Module):
         )
 
     def state_P(self, P) -> SaturationResult:
-        """The same, entered by pressure."""
-        P = jnp.asarray(P)
-
-        def residual(T, target):
-            _, rho_V = self.densities(T)
-            return self.eos.props_rhoT(rho_V, T)[ThermoVar.P] - target
-
-        T_sat, converged = bisect(
-            residual,
-            jnp.asarray(self.T_min),
-            jnp.asarray(self.T_crit),
-            P,
-            max_steps=TOL.caps.bisect_steps,
-            rtol=TOL.acc.sat_inversion_rtol,
-            atol=TOL.acc.bisect_atol,
-        )
-        state = self.state_T(T_sat)
+        """P -> T -> both saturated branches at T."""
+        T, on_curve = self.T_of_P(P)
+        state = self.state_T(T)
         return SaturationResult(
             L=state.L,
             V=state.V,
             T=state.T,
             P=state.P,
-            is_valid=state.is_valid & converged,
+            is_valid=state.is_valid & on_curve,
         )
 
     def inside_dome(self, rho, T):

@@ -234,7 +234,10 @@ def make_fluid(
 def fit_superancillary(path: Path | str) -> Path:
     _require_x64()
     path = Path(path)
-    fit = from_eos(provisional_eos(json.loads(path.read_text())["eos"]))
+    eos_block = json.loads(path.read_text())["eos"]
+    # the curve is what this replaces, whatever layout it was stored in
+    eos_block.pop("superancillary", None)
+    fit = from_eos(provisional_eos(eos_block))
     logger.info("%s superancillary: %s", path.stem, fit)
     return fit.save(path)
 

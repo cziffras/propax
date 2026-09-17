@@ -4,7 +4,7 @@ from ...core.config import ThermoVar
 from ...core.tolerances import TOL
 from ...fluids.generic.eos.helmholtz import HelmholtzEOS
 from ...fluids.generic.eos.schema_eos import HelmholtzEOSDefinition
-from ..solvers import bisect
+from ..solvers import newton_loop
 from .critical import solve_critical_point
 
 
@@ -55,15 +55,17 @@ def density_ceiling(eos, rho_L_triple: float) -> float:
                 f"before reaching P_max = {P_max:.3e} Pa at {T:.2f} K"
             )
 
-    rho_mass, converged = bisect(
-        lambda rho, _: eos.props_rhoT(rho, jnp.asarray(T))[ThermoVar.P] - P_max,
+    def residual(rho, _):
+        state, derivs = eos.props_rhoT(rho, jnp.asarray(T), with_derivatives=True)
+        return state[ThermoVar.P] - P_max, derivs["dP_drho"]
+
+    # the walk above leaves P_max bracketed where P rises with rho
+    rho_mass, _ = newton_loop(
+        residual,
         jnp.asarray(lo),
         jnp.asarray(hi),
         None,
-        max_steps=TOL.caps.bisect_steps,
-        rtol=TOL.acc.inner_rtol,
-        atol=TOL.acc.bisect_atol,
+        max_steps=TOL.caps.newton_steps,
+        rtol=TOL.acc.newton_rtol,
     )
-    if not bool(converged):
-        raise ValueError(f"no density reaches P_max = {P_max:.3e} Pa at {T:.2f} K")
     return float(rho_mass) / eos.molar_mass

@@ -29,7 +29,6 @@ class RightRoot(PrecisionScaled):
 
     temperature: float = field(default=1e-5, metadata={"loosest": 1e-3})
     density: float = field(default=1e-5, metadata={"loosest": 1e-3})
-    pressure: float = field(default=1e-5, metadata={"loosest": 1e-3})
     energy: float = field(default=1e-5, metadata={"loosest": 1e-3})
 
     phase_disagreement: float = field(default=0.05, metadata={"scales": False})

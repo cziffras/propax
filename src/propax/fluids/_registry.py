@@ -79,6 +79,9 @@ def _build_registry() -> Dict[str, Tuple[Callable, Callable, Callable, Callable]
     return registry
 
 
+# NOTE : eager build of the registry --> a single invalid json makes it crash
+# to go over this either regenerate a valid set of fluid files (through catalogue action)
+# or point to a directory of valid json files with PROPAX_FLUID_DIR=/path/to/fluids
 EQS_REGISTRY: Dict[str, Tuple[Callable, Callable, Callable, Callable]] = (
     _build_registry()
 )

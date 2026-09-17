@@ -11,7 +11,7 @@ from .critical import (
     solve_critical_point,
 )
 from .curve import SaturationCurve, saturation_walk
-from .fit import SaturationFit, fit_saturation, from_eos
+from .fit import SaturationFit, from_eos
 from .superancillary import ChebyshevChannel
 
 __all__ = [
@@ -19,7 +19,6 @@ __all__ = [
     "SaturationCurve",
     "ChebyshevChannel",
     "SaturationFit",
-    "fit_saturation",
     "saturated_pair",
     "saturated_pairs",
     "critical_constants",

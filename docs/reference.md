@@ -25,7 +25,9 @@ props = Interface.create("n-propane")
 ### What comes back
 
 `flash`, `fast_flash` and `props_rhoT` all return a `ResultDict`,
-indexed by the CoolProp-style name  `state["T"]`, `state["rho"]`.
+indexed by the CoolProp-style name  `state["T"]`, `state["rho"]`. `flash` and
+`fast_flash` return a flag beside it: whether the solve converged, and whether
+the lookup rests on solved nodes only.
 
 | key | quantity | unit |
 |---|---|---|
@@ -116,14 +118,15 @@ with the name and the exact signature it owes.
 ```
 python -m propax.make_fluid <Name>                    transcribe a fluid, fit its curve
 python -m propax.make_fluid --list-convertible        the names this converter accepts
-python -m propax.build_tables <fluid> --target 1e-5   build its interpolation tables
+python -m propax.build_tables <fluid> --pair X Y --bounds X=lo:hi Y=lo:hi
+                                                      build interpolation tables
 python -m propax.build_tables --list                  what the cache holds, and its size
 python -m propax.utils.make_utils.coverage            what converts, and what blocks the rest
 ```
 
-`make_fluid` needs the `coolprop` extra; the runtime never imports it. Pass
-`--target` when building tables: without it the grid is uniform and the
-two-phase tables are skipped, so `fast_flash` returns NaN inside the dome.
+`make_fluid` needs the `coolprop` extra; the runtime never imports it. A table
+has no default range: `build_tables` takes the pairs to tabulate and the bounds
+of each of their variables, and `fast_flash` returns NaN outside them.
 
 ## Architecture
 
@@ -151,7 +154,7 @@ propax/
     generic/          one module per correlation family
   utils/
     numerics.py      
-    solvers.py        the bracketed Newton and bisection
+    solvers.py        the bracketed Newton
     exact/            offline, mpmath: critical point and superancillary fit
     make_utils/       offline: CoolProp -> a definition file
     build_utils/      offline: a definition file -> interpolation tables

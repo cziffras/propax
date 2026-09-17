@@ -138,10 +138,9 @@ class PhaseID(IntEnum):
 
 class Axis(BaseModel):
     variable: ThermoVar
-    min_val: float
-    max_val: float
+    min_val: float = -float("inf")
+    max_val: float = float("inf")
     spacing: Literal["linear", "log"] = "linear"
-    n_points: int = 1000
 
     @property
     def key(self) -> str:
@@ -186,16 +185,15 @@ def _table(x: Axis, y: Axis) -> TableSpec:
     )
 
 
-_DENSITY = Axis(variable=ThermoVar.D, min_val=0.5, max_val=75.0, spacing="log")
-_TEMPERATURE = Axis(variable=ThermoVar.T, min_val=15.0, max_val=150.0)
-_PRESSURE = Axis(variable=ThermoVar.P, min_val=1e4, max_val=1.5e6, spacing="log")
-_ENERGY = Axis(variable=ThermoVar.U, min_val=-5e4, max_val=1e6)
-_ENTHALPY = Axis(variable=ThermoVar.H, min_val=-5e4, max_val=1.5e6)
-_ENTROPY = Axis(variable=ThermoVar.S, min_val=-1e4, max_val=5e4)
+_DENSITY = Axis(variable=ThermoVar.D, spacing="log")
+_TEMPERATURE = Axis(variable=ThermoVar.T)
+_PRESSURE = Axis(variable=ThermoVar.P, spacing="log")
+_ENERGY = Axis(variable=ThermoVar.U)
+_ENTHALPY = Axis(variable=ThermoVar.H)
+_ENTROPY = Axis(variable=ThermoVar.S)
 
 TABLE_REGISTRY: List[TableSpec] = [
     _table(_DENSITY, _ENERGY),
-    _table(_TEMPERATURE, _PRESSURE),
     _table(_PRESSURE, _ENTHALPY),
     _table(_PRESSURE, _ENTROPY),
     _table(_PRESSURE, _ENERGY),
@@ -203,3 +201,31 @@ TABLE_REGISTRY: List[TableSpec] = [
     _table(_DENSITY, _ENTROPY),
     _table(_TEMPERATURE, _ENTROPY),
 ]
+
+
+def table_spec(pair, bounds) -> TableSpec:
+    """The registry's table for `pair`, on the ranges given by `bounds`,
+    {variable: (lo, hi)}. A table has no default range: which states it covers
+    is the user's choice."""
+    wanted = {ThermoVar(v) for v in pair}
+    bounds = {ThermoVar(v): ends for v, ends in bounds.items()}
+    spec = next(
+        (s for s in TABLE_REGISTRY if {s.x_axis.variable, s.y_axis.variable} == wanted),
+        None,
+    )
+    if spec is None:
+        tabled = ", ".join(s.name for s in TABLE_REGISTRY)
+        raise ValueError(f"no table for the pair {tuple(pair)}; tabled: {tabled}")
+
+    def bounded(axis: Axis) -> Axis:
+        var = axis.variable
+        if var not in bounds:
+            raise ValueError(f"{spec.name} needs the bounds of {var.value}")
+        lo, hi = bounds[var]
+        if not lo < hi or (axis.spacing == "log" and lo <= 0):
+            raise ValueError(f"invalid bounds for {var.value}: ({lo}, {hi})")
+        return axis.model_copy(update={"min_val": lo, "max_val": hi})
+
+    return spec.model_copy(
+        update={"x_axis": bounded(spec.x_axis), "y_axis": bounded(spec.y_axis)}
+    )

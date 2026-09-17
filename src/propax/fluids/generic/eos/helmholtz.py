@@ -1,7 +1,6 @@
 from typing import Any, Dict, Literal, Tuple, Union, overload
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -145,13 +144,6 @@ class HelmholtzEOS(eqx.Module):
     def rho_crit_mass(self):
         return self.rho_crit_mol * self.molar_mass
 
-    def alpha0(self, delta, tau):
-        """Reduced ideal-gas Helmholtz energy: sum of the ideal term modules."""
-        total = jnp.asarray(0.0)
-        for term in self.ideal_terms:
-            total = total + term.contribution(delta, tau)
-        return total
-
     def alphar(self, delta, tau, namespace=jnp):
         """Reduced residual Helmholtz energy: sum of the residual term modules.
 
@@ -163,18 +155,6 @@ class HelmholtzEOS(eqx.Module):
         for term in self.residual_terms:
             total = total + term.contribution(delta, tau, namespace)
         return total
-
-    def _vgh(self, f, delta, tau):
-        x = jnp.stack([delta, tau])
-
-        def g(z):
-            return f(z[0], z[1])
-
-        val, grad = jax.value_and_grad(g)(x)
-        hess = jax.jacfwd(jax.grad(g))(
-            x
-        )  # grad returns a (2,) --> (2,) func perfect for forward mode
-        return val, grad, hess
 
     def _thermo_state(self, delta, tau):
         """Both potentials and every derivative the thermodynamics needs.

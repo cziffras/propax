@@ -61,35 +61,19 @@ class PrecisionScaled:
 @dataclass(frozen=True)
 class Accuracies(PrecisionScaled):
     #  bracketed solves
-    inner_rtol: float = 1e-13
-    """Density along an isotherm, `P(rho, T) = P`."""
-
     outer_rtol: float = 1e-13
-    """Temperature along an isobar, enclosing `inner_rtol`."""
+    """Temperature along an isobar, enclosing the density solve at each step."""
 
     newton_rtol: float = 1e-15
     """Relative step at which the safeguarded Newton stops. A few ulp."""
-
-    bisect_atol: float = 1e-12
-    """Absolute width at which a bisection stops, for the roots whose scale is
-    not known in advance."""
 
     root_atol: float = field(default=1e-8, metadata={"loosest": 1e-5})
     """Acceptance, not convergence: how small a scaled residual counts as a
     root. It rejects an answer rather than stopping a loop."""
 
-    newton: Dict[str, float] = field(
-        default_factory=lambda: {"rtol": 1e-9, "atol": 1e-9},
-        metadata={"loosest": 1e-4},
-    )
-    """The polishing Newton of the 1D solve. Tests the step, not the residual."""
-
     #  the saturation line
-    sat_rtol: float = 1e-14
-    """T_sat(rho), which sets a bracket's end."""
-
-    sat_inversion_rtol: float = 1e-13
-    """T_sat(P). Carries the answer, not a seed."""
+    channel_edge: float = 1e-12
+    """How far past its ends a fitted channel still answers, as a relative tolerance."""
 
     sat_edge_nudge: float = 1e-12
     """How far off the saturation line a bracket endpoint is pushed, relative."""
@@ -108,12 +92,6 @@ class Accuracies(PrecisionScaled):
     )
     """The optimistix Newtons of `saturation` and `two_phase`."""
 
-    sat_inversion_bisect: Dict[str, float] = field(
-        default_factory=lambda: {"rtol": 1e-7, "atol": 1e-5},
-        metadata={"loosest": {"rtol": 1e-4, "atol": 1e-2}},
-    )
-    """T_sat(P) on the slow path, taken when no spline is loaded."""
-
     #  degeneracies (when getting to critical point)
     lever_denom_atol: float = field(default=1e-9, metadata={"loosest": 1e-4})
     """Below this the saturated pair is too close for the lever rule to divide."""
@@ -124,9 +102,7 @@ class Caps:
     newton_steps: int = 40
     warm_newton_steps: int = 20
     isobar_steps: int = 100
-    bisect_steps: int = 100
     equilibrium_steps: int = 10
-    sat_inversion_bisect_steps: int = 30
     n_seed_scan: int = 64
 
 

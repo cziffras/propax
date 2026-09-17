@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, List
 
 import numpy as np
 
 from .precision import PRECISION
 
-# ------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 # SUPERANCILLARIES MATERIAL : find all details in docs/superancillaries.md
+#
+# NOTE : for simplicity all fitted variables are monotone in T (Psat, rho_L,
+#   rho_V) while we could have fitted calorific variables too as planned
+#   initially, we realized it offered no more speed than reading the EOS
+#   evaluated in rho_L, rho_V while complicating the code significantly
 # ------------------------------------------------------------------------
 
 
@@ -18,14 +23,8 @@ _TAIL = 3
 _MAX_PASSES = 12
 """Dyadic halvings allowed."""
 
-_DEGREES = (8, 12, 16, 24, 32, 48)
+_DEGREES = (8, 16, 32)
 """Degrees each channel chooses from, minimising `pieces * (degree + 1)`."""
-
-_IM_TOL = 1e-10
-"""Imaginary part below which a colleague-matrix eigenvalue counts as real."""
-
-_OUT_TOL = 1e-8
-"""How far outside [-1, 1] a root may stray before it is discarded as spurious."""
 
 
 def cheb_lobatto_nodes(degree: int, xmin: float, xmax: float) -> np.ndarray:
@@ -73,17 +72,6 @@ class ChebyshevExpansion:
             b1, b2 = 2.0 * t * b1 - b2 + c[k], b1
         return c[0] + t * b1 - b2
 
-    def derivative(self) -> "ChebyshevExpansion":
-        c = self.coeffs
-        n = len(c) - 1
-        d = np.zeros((max(n, 1),) + c.shape[1:])
-        for k in range(n, 0, -1):
-            d[k - 1] = (d[k + 1] if k + 1 < len(d) else 0.0) + 2.0 * k * c[k]
-        d[0] *= 0.5
-        return ChebyshevExpansion(
-            self.xmin, self.xmax, d * (2.0 / (self.xmax - self.xmin))
-        )
-
     def tail_ratio(self, tail: int = _TAIL) -> float:
         """Norm of the last `tail` coefficients over the first `tail`.
 
@@ -95,45 +83,6 @@ class ChebyshevExpansion:
         tail_n = np.linalg.norm(c[-tail:], axis=0)
         ratio = np.where(head == 0.0, 0.0, tail_n / np.where(head == 0.0, 1.0, head))
         return float(np.max(ratio))
-
-    def component(self, i: int) -> "ChebyshevExpansion":
-        """One component on its own, for the scalar machinery below."""
-        c = np.atleast_2d(self.coeffs.T).T
-        return ChebyshevExpansion(self.xmin, self.xmax, c[:, i])
-
-    def roots(self) -> np.ndarray:
-        """Every real root in [xmin, xmax], via the colleague matrix."""
-        # scalar only: the colleague matrix is one series' companion, so a
-        # vector expansion is asked for its components one at a time
-        c = np.trim_zeros(np.asarray(self.coeffs).ravel(), "b")
-        n = len(c) - 1
-        if n < 1:
-            return np.empty(0)
-        if n == 1:
-            r = np.array([-c[0] / c[1]])
-            return self._keep_inside(r)
-
-        A = np.zeros((n, n))
-        A[0, 1] = 1.0
-        for i in range(1, n - 1):
-            A[i, i - 1] = 0.5
-            A[i, i + 1] = 0.5
-        A[n - 1, n - 2] = 0.5
-        A[n - 1, :] -= c[:n] / (2.0 * c[n])
-
-        ev = np.linalg.eigvals(A)
-        real = ev[np.abs(ev.imag) < _IM_TOL].real
-        return self._keep_inside(real)
-
-    def _keep_inside(self, unit_roots: np.ndarray) -> np.ndarray:
-        # strictly inside: a root just outside must not be clamped onto the
-        # edge, or every piece whose derivative merely comes close to zero at
-        # its boundary reports a spurious extremum there
-        keep = unit_roots[
-            (unit_roots > -1.0 + _OUT_TOL) & (unit_roots < 1.0 - _OUT_TOL)
-        ]
-        x = 0.5 * ((self.xmax - self.xmin) * keep + (self.xmax + self.xmin))
-        return np.sort(x)
 
 
 def fit_expansion(
@@ -177,46 +126,22 @@ def dyadic_split(
 
 
 # ----------------------------------------------------------------------------
-# One channel --> piecewise expansion, cut into monotone segments for accuracy
+# One channel --> piecewise expansion
 # ----------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class MonotoneSegment:
-    xmin: float
-    xmax: float
-    lo: float
-    hi: float
-    increasing: bool
-
-    def contains(self, y: float) -> bool:
-        return self.lo <= y <= self.hi
-
-
 class ChebyshevChannel:
-    """One quantity along the curve: evaluate it, or invert it.
-    This is the `build side` module that does not require any JAX
-    machinery."""
+    """One quantity along the curve, fitted piecewise. This is the `build side`
+    module that does not require any JAX machinery."""
 
-    def __init__(
-        self,
-        f: Callable[[np.ndarray], np.ndarray],
-        xmin: float,
-        xmax: float,
-        degree: Optional[int] = None,
-    ):
+    def __init__(self, f: Callable[[np.ndarray], np.ndarray], xmin: float, xmax: float):
         self.xmin, self.xmax = xmin, xmax
-        if degree is None:
-            fits = {d: dyadic_split(f, xmin, xmax, d) for d in _DEGREES}
-            # degree trades against piece count, while maintaining accuracy we aim
-            # to minimize storage use since all parameters are to be loaded in RAM
-            # at runtime
-            degree = min(fits, key=lambda d: len(fits[d]) * (d + 1))
-            self.pieces = fits[degree]
-        else:
-            self.pieces = dyadic_split(f, xmin, xmax, degree)
-        self.degree = degree
-        self.segments = self._build_segments()
+        fits = {d: dyadic_split(f, xmin, xmax, d) for d in _DEGREES}
+        # degree trades against piece count, while maintaining accuracy we aim
+        # to minimize storage use since all parameters are to be loaded in RAM
+        # at runtime
+        self.degree = min(fits, key=lambda d: len(fits[d]) * (d + 1))
+        self.pieces = fits[self.degree]
 
     def _piece_of(self, x: float) -> ChebyshevExpansion:
         for piece in self.pieces:
@@ -235,63 +160,9 @@ class ChebyshevChannel:
         c = self.pieces[0].coeffs
         return 1 if c.ndim == 1 else c.shape[1]
 
-    def _derivative_at(self, x: float, i: int) -> float:
-        p = self._piece_of(x)
-        return float(p.component(i).derivative()(x))
-
-    def _interior_extrema(self, i: int) -> np.ndarray:
-        """Where component `i`'s derivative vanishes, across all the pieces.
-
-        Per component: two quantities fitted on one interval have no reason to
-        turn over at the same place, and each is inverted on its own.
-        """
-        found = [p.component(i).derivative().roots() for p in self.pieces]
-        x = np.concatenate(found) if found else np.empty(0)
-        span = self.xmax - self.xmin
-        # take the interior points
-        x = np.sort(x[(x > self.xmin + 1e-12) & (x < self.xmax - 1e-12)])
-        if x.size == 0:
-            return x
-        # merge points that are extremely close on the axis; 1e-9 because
-        # when evaluating the sign of the slope we use the below eps that
-        # needs to be greater than this tolerance
-        x = x[np.concatenate([[True], np.diff(x) > 1e-9 * span])]
-
-        eps = 1e-7 * span
-        turning = [
-            v
-            for v in x
-            if self._derivative_at(max(self.xmin, v - eps), i)
-            * self._derivative_at(min(self.xmax, v + eps), i)
-            < 0.0
-        ]  # determine the sign of the slope at each of those points
-        return np.asarray(turning)
-
-    def _build_segments(self) -> List[List[MonotoneSegment]]:
-        """One list of monotone stretches per component."""
-        out = []
-        for i in range(self.n_components):
-            cuts = np.concatenate([[self.xmin], self._interior_extrema(i), [self.xmax]])
-            segs = []
-            for a, b in zip(cuts[:-1], cuts[1:]):
-                ya = float(np.atleast_1d(self(a))[i])
-                yb = float(np.atleast_1d(self(b))[i])
-                segs.append(
-                    MonotoneSegment(
-                        xmin=float(a),
-                        xmax=float(b),
-                        lo=min(ya, yb),
-                        hi=max(ya, yb),
-                        increasing=yb > ya,
-                    )
-                )
-            out.append(segs)
-        return out
-
     def __repr__(self) -> str:
         worst = max(g.tail_ratio(_TAIL) for g in self.pieces)
         return (
             f"<ChebyshevChannel degree {self.degree}, {len(self.pieces)} pieces, "
-            f"{[len(g) for g in self.segments]} monotone segment(s), "
             f"worst tail {worst:.1e}>"
         )

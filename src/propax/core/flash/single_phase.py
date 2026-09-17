@@ -14,6 +14,7 @@ from ..config import ThermoVar
 from ..domain import T_bounds, node_is_valid, rho_bounds
 from ..saturation import Superancillary
 from ..tolerances import TOL
+from .dispatch import both_natural_pair, is_nested_pair, one_dim_known_var
 
 # What a residual returns where the EOS has nothing to say
 _OUT_OF_DOMAIN = 1e6
@@ -180,7 +181,7 @@ def solve_1d(
     walks it and carries the derivative.
     """
     solve_for_T = tvar_known == ThermoVar.D
-    scale = ThermoVar(tvar_other).spec.scale
+    scale = tvar_other.spec.scale
     key = tvar_other.internal_key
 
     def as_rho_T(unknown, known):
@@ -257,17 +258,12 @@ def _density_at_TP(
     nearly incompressible, and the ideal gas for a vapour, which is exact in the
     dilute limit.
     """
-    rho_lo, rho_hi = (jnp.asarray(b) for b in rho_bounds(saturation))
-    on_dome = T < saturation.T_crit
-    saturated = saturation.state_T(jnp.clip(T, saturation.T_min, saturation.T_crit))
-    rho_L, rho_V = saturated.L[ThermoVar.D], saturated.V[ThermoVar.D]
-
-    is_liquid = P > saturated.P
-    lo = pick(on_dome & is_liquid, rho_L, rho_lo)
-    hi = pick(on_dome & jnp.logical_not(is_liquid), rho_V, rho_hi)
+    lo, hi = _bracket_for_rho(eos, saturation, T, ThermoVar.P, P)
 
     if seed is None:
-        seed = pick(on_dome & is_liquid, rho_L, P / (eos.R_spec * T))
+        # a liquid bracket starts on rho_L, above the domain's own floor
+        rho_lo, _ = rho_bounds(saturation)
+        seed = pick(lo > rho_lo, lo, P / (eos.R_spec * T))
 
     def residual(rho, args):
         eos_, T_, P_ = args
@@ -548,3 +544,47 @@ def solve_nested(
         & node_is_valid(saturation, rho_sol, T_sol)
     )
     return jnp.asarray(op_status), rho_sol, T_sol
+
+
+def solve_single_phase(
+    eos: HelmholtzEOS,
+    saturation: Superancillary,
+    tvar1: ThermoVar,
+    val1: Array,
+    tvar2: ThermoVar,
+    val2: Array,
+    is_inactive: jaxBool,
+) -> Tuple[jaxBool, Array, Array]:
+    """(ok, rho, T) off the dome, for every supported pair but a quality read.
+
+    Every route converges without an initial guess, so none needs a table:
+    - (D, T) are the EOS' own variables, the state is the input
+    - P fixes an isobar the caloric variable is monotone along, `solve_nested`
+    - with D or T given only the other member of (rho, T) is unknown, `solve_1d`
+    """
+    if both_natural_pair(tvar1, tvar2):
+        rho, T = (val1, val2) if tvar1 == ThermoVar.D else (val2, val1)
+        # no solver runs here, so `is_inactive` has to be reported on its own
+        ok = (
+            jnp.isfinite(rho)
+            & jnp.isfinite(T)
+            & (rho > 0.0)
+            & jnp.logical_not(is_inactive)
+        )
+        return ok, rho, T
+
+    if is_nested_pair(tvar1, tvar2):
+        val_P, tvar_other, val_other = (
+            (val1, tvar2, val2) if tvar1 == ThermoVar.P else (val2, tvar1, val1)
+        )
+        return solve_nested(eos, saturation, tvar_other, val_P, val_other, is_inactive)
+
+    known = one_dim_known_var(tvar1, tvar2)
+    if known is None:
+        raise ValueError(f"({tvar1.value}, {tvar2.value}) has no single-phase solver")
+    val_known, tvar_other, val_other = (
+        (val1, tvar2, val2) if tvar1 == known else (val2, tvar1, val1)
+    )
+    return solve_1d(
+        eos, saturation, known, val_known, tvar_other, val_other, is_inactive
+    )

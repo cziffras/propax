@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from propax.utils.types import jaxBool, jaxFloat
+from propax.utils.types import jaxBool
 
 from .config import ThermoVar
 
@@ -15,7 +15,7 @@ class PropertyMap(Mapping):
     """A property map that cannot be mutated in place.
 
     Built from `ThermoVar` keys, read back by either those or the internal
-    name they carry. `replace` and `discard` return a new map, so a value
+    name they carry. `replace` returns a new map, so a value
     reaching a traced call is never rebound behind it.
     """
 
@@ -43,14 +43,6 @@ class PropertyMap(Mapping):
         for key, value in dict(entries).items():
             merged[key.internal_key if isinstance(key, ThermoVar) else key] = value
         return PropertyMap.of_internal(merged)
-
-    def discard(self, key) -> "PropertyMap":
-        name = key.internal_key if isinstance(key, ThermoVar) else key
-        if name not in self._entries:
-            raise KeyError(f"nothing stored under {key!r}")
-        return PropertyMap.of_internal(
-            {k: v for k, v in self._entries.items() if k != name}
-        )
 
     def __getitem__(self, key):
         name = key.internal_key if isinstance(key, ThermoVar) else key
@@ -94,21 +86,6 @@ jax.tree_util.register_pytree_node(PropertyMap, _flatten, _rebuild)
 
 def _to_array(v):
     return jnp.asarray(v)
-
-
-class TxResult(eqx.Module):
-    """A two-phase state: T or P known, and the quality with it.
-
-    `mix` carries D, U, H, S of the mixture, `L` and `V` the same on each
-    saturated branch.
-    """
-
-    mix: PropertyMap
-    L: PropertyMap
-    V: PropertyMap
-    x: jaxFloat
-    T: jaxFloat
-    P: jaxFloat
 
 
 class SaturationResult(eqx.Module):
