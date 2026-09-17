@@ -6,11 +6,10 @@ import textwrap
 from pathlib import Path
 from typing import Optional
 
+from .core.config import table_spec
 from .utils.build_utils import (
     EQS_REGISTRY,
     build_adaptive_table,
-    build_vectorized_table,
-    fluid_table_registry,
     get_table_path,
     logger,
 )
@@ -18,16 +17,15 @@ from .utils.build_utils import (
 
 def create_all_tables(
     fluid_name: str,
-    target: float,
+    pairs: list,
+    bounds: dict,
+    target: float = 1e-5,
     tables_base_path: Optional[Path] = None,
 ):
     """
-    Create all interpolation tables defined in TABLE_REGISTRY for a given
-    fluid.
-
-    `target` switches the axes from uniform to graded: they are then refined
-    until the measured interpolation error meets it, which spends nodes only
-    where a measurement asks for them.
+    Build the tables of `pairs` for a fluid, over `bounds` ({variable: (lo, hi)},
+    one entry per variable of the pairs), refined until the measured
+    interpolation error meets `target`.
 
     Please note a table does not have to meet high precision requirements, by
     design it is more suited for typical float32 compatible tolerances (~1e-5
@@ -35,16 +33,13 @@ def create_all_tables(
     """
     if tables_base_path is None:
         tables_base_path = get_table_path()
+    # every request is checked before the first, long, build starts
+    specs = [table_spec(pair, bounds) for pair in pairs]
 
     failures: list = []
-    for table_cfg in fluid_table_registry(fluid_name):
+    for table_cfg in specs:
         try:
-            if target is None:
-                build_vectorized_table(fluid_name, table_cfg, tables_base_path)
-            else:
-                build_adaptive_table(
-                    fluid_name, table_cfg, tables_base_path, target=target
-                )
+            build_adaptive_table(fluid_name, table_cfg, tables_base_path, target=target)
         except Exception as e:
             logger.error(f"  ERROR building {table_cfg.name}: {e}", exc_info=True)
             failures.append((table_cfg.name, e))
@@ -132,11 +127,13 @@ def remove_fluids(names: list, base: Path) -> int:
     return status
 
 
-def build_fluids(names: list, base: Path, target: float) -> int:
+def build_fluids(
+    names: list, base: Path, pairs: list, bounds: dict, target: float
+) -> int:
     incomplete = []
     for fluid in names:
         try:
-            create_all_tables(fluid, tables_base_path=base, target=target)
+            create_all_tables(fluid, pairs, bounds, target, tables_base_path=base)
         except Exception as e:
             logger.error(f"{fluid}: {e}")
             incomplete.append(fluid)
@@ -162,17 +159,23 @@ def _build_parser() -> argparse.ArgumentParser:
             Build the interpolation tables a fluid needs, into the propax cache
             (PROPAX_TABLE_DIR, else ~/.cache/propax).
 
+            Tables have no default range: name the pairs you use with --pair,
+            and the bounds of each of their variables with --bounds. Outside
+            them `fast_flash` returns NaN.
+
             A table is a few tens to a few hundred MB, so build only the fluids
             you actually use  there is no reason to hold all covered fluids.
-            Grid corners outside the physical domain are filled from their nearest
-            valid neighbour; the warnings about them are only informative.
+            Nodes outside the physical domain are extrapolated from their solved
+            neighbours.
+
+            example: python -m propax.build_tables n-propane --pair P H \\
+                         --bounds P=1e4:5e6 H=-3e5:1.5e6
         """),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("fluids", nargs="*", help="fluid names, e.g. hydrogen argon")
 
     action = parser.add_mutually_exclusive_group()
-    action.add_argument("--all", action="store_true", help="build every known fluid")
     action.add_argument("--list", action="store_true", help="show what the cache holds")
     action.add_argument(
         "--remove", metavar="FLUID", nargs="+", help="delete these from the cache"
@@ -193,13 +196,41 @@ def _build_parser() -> argparse.ArgumentParser:
         "peak memory at some cost in speed (try 1024 if a build is swapping)",
     )
     parser.add_argument(
+        "--pair",
+        nargs=2,
+        action="append",
+        metavar=("X", "Y"),
+        help="a pair to tabulate, e.g. --pair P H; repeat it for several",
+    )
+    parser.add_argument(
+        "--bounds",
+        nargs="+",
+        default=[],
+        metavar="VAR=LO:HI",
+        help="the range of each variable of the pairs, e.g. P=1e4:5e6 H=-3e5:1.5e6",
+    )
+    parser.add_argument(
         "--target",
         type=float,
+        default=1e-5,
         metavar="ERR",
-        help="grade the axes until the measured interpolation error meets ERR "
-        "(e.g. 1e-5) instead of using a uniform grid",
+        help="refine the axes until the measured interpolation error meets ERR "
+        "(default 1e-5)",
     )
     return parser
+
+
+def _bounds(args, parser: argparse.ArgumentParser) -> dict:
+    """{variable: (lo, hi)} from the VAR=LO:HI items of --bounds."""
+    bounds = {}
+    for item in args.bounds:
+        try:
+            var, ends = item.split("=")
+            lo, hi = ends.split(":")
+            bounds[var] = (float(lo), float(hi))
+        except ValueError:
+            parser.error(f"--bounds takes VAR=LO:HI items, got {item!r}")
+    return bounds
 
 
 def _apply_settings(args) -> None:
@@ -209,12 +240,10 @@ def _apply_settings(args) -> None:
 
 
 def _targets(args, parser: argparse.ArgumentParser) -> list:
-    if args.all:
-        return sorted(EQS_REGISTRY)
     if not args.fluids:
-        parser.error(
-            "name at least one fluid, or pass --all / --list / --remove / --clear"
-        )
+        parser.error("name at least one fluid, or pass --list / --remove / --clear")
+    if not args.pair:
+        parser.error("name the pairs to tabulate with --pair, e.g. --pair P H")
     names = [f.lower().replace(" ", "") for f in args.fluids]
     unknown = [f for f in names if f not in EQS_REGISTRY]
     if unknown:
@@ -237,7 +266,8 @@ def main(argv=None) -> int:
         return clear_cache(base, args.yes)
     if args.remove:
         return remove_fluids(args.remove, base)
-    return build_fluids(_targets(args, parser), base, args.target)
+    names = _targets(args, parser)
+    return build_fluids(names, base, args.pair, _bounds(args, parser), args.target)
 
 
 if __name__ == "__main__":
