@@ -163,7 +163,7 @@ class Interface(eqx.Module):
             logger.info(
                 "%s: %d of %d table(s) not loaded from %s, `fast_flash` is "
                 "unavailable for them until `python -m propax.build_tables "
-                "%s` has run. Missing: %s",
+                "%s --pair X Y --bounds X=lo:hi Y=lo:hi` has run. Missing: %s",
                 key_name,
                 len(missing),
                 len(TABLE_REGISTRY),
@@ -183,7 +183,7 @@ class Interface(eqx.Module):
         )
 
     @eqx.filter_jit
-    def _interp(self, tvar1, val1, tvar2, val2) -> PropertyMap:
+    def _interp(self, tvar1, val1, tvar2, val2) -> Tuple[PropertyMap, jaxBool]:
         """The interface's one door onto the interpolation tables."""
         return call_interp(
             self.interpolators, self.table_for_pair, tvar1, val1, tvar2, val2
@@ -293,12 +293,11 @@ class Interface(eqx.Module):
         name2: str,
         val2: jaxFloat,
         transport: bool = False,
-    ) -> PropertyMap:
+    ) -> Tuple[PropertyMap, jaxBool]:
         """One bicubic lookup, then every property rederived from the state it locates.
 
         Roughly twenty times the throughput of `flash`, at table-grade
-        accuracy, and differentiable: the interpolant is differentiated, not
-        the data.
+        accuracy, and differentiable.
 
         Args:
             name1: What the first value measures, as a CoolProp-style name
@@ -309,8 +308,11 @@ class Interface(eqx.Module):
             transport: Also return viscosity and conductivity.
 
         Returns:
-            The properties alone, with no convergence flag beside them: a
-            lookup CANNOT fail loudly.
+            The properties, and a flag saying whether they are reliable. It is
+            False off the table's axes, where they come back NaN, and next to
+            nodes the build could not solve (the critical point, the edges of
+            the domain), where they are extrapolated: finite, but outside the
+            accuracy the build measured.
 
         Raises:
             FileNotFoundError: if no table has been built for this pair. The
@@ -319,26 +321,37 @@ class Interface(eqx.Module):
         dtype = _dtype()
         tvar1 = ThermoVar(name1)
         tvar2 = ThermoVar(name2)
-        if frozenset({tvar1, tvar2}) not in self.table_for_pair:
-            raise FileNotFoundError(
-                f"no interpolation table for ({tvar1.value}, {tvar2.value}). Build "
-                f"them with `python -m propax.build_tables {self.fluid_name}`, or use "
-                "`flash`, which needs none."
+        pair = {tvar1, tvar2}
+        if frozenset(pair) not in self.table_for_pair:
+            tabled = any(
+                {s.x_axis.variable, s.y_axis.variable} == pair for s in TABLE_REGISTRY
             )
-        state = self._interp(
+            hint = (
+                f"build it with `python -m propax.build_tables {self.fluid_name} "
+                f"--pair {tvar1.value} {tvar2.value} --bounds {tvar1.value}=lo:hi "
+                f"{tvar2.value}=lo:hi`, or use `flash`, which needs none"
+                if tabled
+                else "this pair is never tabulated, use `flash`"
+            )
+            raise FileNotFoundError(
+                f"no interpolation table for ({tvar1.value}, {tvar2.value}): {hint}."
+            )
+        state, reliable = self._interp(
             tvar1=tvar1,
             val1=jnp.asarray(val1, dtype=dtype),
             tvar2=tvar2,
             val2=jnp.asarray(val2, dtype=dtype),
         )
-        return self._derive_from_state(state, dtype=dtype, transport=transport)
+        properties = self._derive_from_state(state, dtype=dtype, transport=transport)
+        return properties, reliable
 
     def _derive_from_state(self, state, dtype, transport: bool):
         """Full property set from the interpolated (rho, T) --> returns a coherent
         thermo state
         """
         rho = jnp.asarray(state[ThermoVar.D])
-        T = jnp.asarray(state[ThermoVar.T])
+        # an extrapolated temperature can leave the EOS domain, where it returns NaN
+        T = jnp.clip(jnp.asarray(state[ThermoVar.T]), self.eos.T_triple, self.eos.T_max)
 
         # rho against the saturated densities at T names the phase: no quality
         # channel needed, and no dome mask to interpolate across

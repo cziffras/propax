@@ -46,7 +46,7 @@ props = Interface.create("n-propane")
 state, converged = props.flash("P", 2e5, "H", 3e5)
 
 # fast: bicubic table lookup, once the tables are built
-state = props.fast_flash("D", 2.0, "U", 4e5)
+state, reliable = props.fast_flash("D", 2.0, "U", 4e5)
 
 # direct EOS evaluation (single phase)
 state = props.props_rhoT(2.0, 300.0)
@@ -163,12 +163,17 @@ dependency. Their derivatives come from autodiff, which also makes the bicubics
 more precise.
 
 ```
-python -m propax.build_tables hydrogen --target 1e-5   # only the fluids you use
+python -m propax.build_tables n-propane --pair P H --pair D U \
+    --bounds P=1e4:5e6 H=-3e5:1.5e6 D=3.5:717 U=-2.3e5:1.4e6
 python -m propax.build_tables --list                   # what the cache holds, and its size
 python -m propax.build_tables --remove argon           # free one fluid
 python -m propax.build_tables --clear                  # free everything
 ```
 
+- **Coverage:** only the pairs you ask for, over the bounds you give for each of
+  their variables. Outside them `fast_flash` returns NaN; inside, next to
+  states the solvers cannot reach, its values are extrapolated. Its second
+  output is False in both cases.
 - **Size:** a few hundred MB per fluid, which is why tables are built on demand
   rather than shipped.
 - **Location:** `~/.cache/propax/<fluid>/`, or anywhere with `PROPAX_TABLE_DIR` or

@@ -1,7 +1,7 @@
 import hashlib
 from functools import partial
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 import equinox as eqx
 import jax
@@ -206,7 +206,7 @@ def _abscissa_of_jvp(channel: ChebyshevPieces, primals, tangents):
     component, value = primals
     _, value_dot = tangents
     x = _abscissa_of(channel, component, value)
-    found = jnp.isfinite(x)
+    found = jnp.isfinite(jnp.asarray(x))
     # implicit function theorem: dx = d(stored value) / (d stored / dx),
     # the numerator carrying the 1/value of a log component
     _, target_dot = jax.jvp(
@@ -243,11 +243,11 @@ class BicubicInterpolation(eqx.Module):
 
     output_names: Tuple[str, ...] = eqx.field(static=True)
 
+    # nodes the build did not solve, filled by a Taylor step from a solved one
+    extrapolated: _Const = eqx.field(static=True)
+
     even_x: bool = eqx.field(static=True, default=True)
     even_y: bool = eqx.field(static=True, default=True)
-
-    # nodes with no physical state, carrying a nearest-neighbour fill
-    unreachable: Optional[_Const] = eqx.field(static=True, default=None)
 
     @classmethod
     def create(cls, table_path: str, dtype=jnp.float32):
@@ -263,6 +263,8 @@ class BicubicInterpolation(eqx.Module):
             path = path / "table_data.npz"
 
         data = np.load(path)
+        if "extrapolated" not in data.files:
+            raise ValueError(f"{path} was built by an older propax, rebuild it")
         axis_x, axis_y = data["arr_x1"], data["arr_x2"]
 
         channels = [data[k] for k in ("f", "dx1", "dx2", "dx1dx2")]
@@ -272,8 +274,6 @@ class BicubicInterpolation(eqx.Module):
         values, slope_x, slope_y, cross = (
             _Const(np.asarray(c, dtype=stored)) for c in channels
         )
-
-        blank = data["unreachable"] if "unreachable" in data.files else None
 
         return cls(
             grid_x=_Const(axis_x),
@@ -289,9 +289,9 @@ class BicubicInterpolation(eqx.Module):
             output_names=tuple(str(name) for name in data["output_names"]),
             x_name=str(data.get("x_name", "unknown")),
             y_name=str(data.get("y_name", "unknown")),
+            extrapolated=_Const(data["extrapolated"]),
             even_x=_is_uniform(axis_x),
             even_y=_is_uniform(axis_y),
-            unreachable=None if blank is None else _Const(blank),
         )
 
     def _locate(self, x, axis, even, step):
@@ -303,7 +303,9 @@ class BicubicInterpolation(eqx.Module):
         k = jnp.clip(jnp.searchsorted(axis, x, side="right") - 1, 0, axis.shape[0] - 2)
         return k, axis[k + 1] - axis[k]
 
-    def __call__(self, x_val: jaxFloat, y_val: jaxFloat) -> jax.Array:
+    def _cell(self, x_val: jaxFloat, y_val: jaxFloat):
+        """(x, y) in internal units clipped to the axes, the cell holding them,
+        and whether they were outside."""
         # materialize the static numpy tables as trace-time constants; raw numpy
         # cannot be indexed by a traced index (it would call __array__ on it)
         axis_x, axis_y = self.grid_x.array, self.grid_y.array
@@ -323,8 +325,18 @@ class BicubicInterpolation(eqx.Module):
 
         i, width_x = self._locate(x, axis_x, self.even_x, self.step_x)
         j, width_y = self._locate(y, axis_y, self.even_y, self.step_y)
-
         corners = jnp.ix_(jnp.array([i, i + 1]).ravel(), jnp.array([j, j + 1]).ravel())
+        return x, y, i, j, width_x, width_y, corners, outside
+
+    def is_extrapolated(self, x_val: jaxFloat, y_val: jaxFloat) -> jax.Array:
+        """Whether the lookup rests on a node the build did not solve."""
+        *_, corners, _ = self._cell(x_val, y_val)
+        return jnp.any(self.extrapolated.array[corners])
+
+    def __call__(self, x_val: jaxFloat, y_val: jaxFloat) -> jax.Array:
+        """Channels at (x, y), NaN outside the axes."""
+        x, y, i, j, width_x, width_y, corners, outside = self._cell(x_val, y_val)
+        axis_x, axis_y = self.grid_x.array, self.grid_y.array
 
         # stored derivatives are per internal unit, a cell wants them per cell:
         # hence the local width, and not a global step
@@ -350,11 +362,4 @@ class BicubicInterpolation(eqx.Module):
         wu = hermite_weights((x - axis_x[i]) / width_x)
         wv = hermite_weights((y - axis_y[j]) / width_y)
         out = jnp.einsum("i,ijc,j->c", wu, block, wv)
-
-        # a cell touching a node with no physical state rests on a fill value;
-        # NaN says so instead of returning a plausible number and the solvers seed
-        # from a mid-domain fallback when they see it, this mostly happens by the
-        # edges of the table
-        if self.unreachable is not None:
-            out = jnp.where(jnp.any(self.unreachable.array[corners]), jnp.nan, out)
         return jnp.where(outside, jnp.nan, out)
