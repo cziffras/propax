@@ -54,9 +54,7 @@ def citation(bibtex_key: str) -> str | None:
         year = {2006}
     }
 
-    Into :
-
-    author: Lemmon, Eric W. and Jacobsen, Richard T. | title: A New Functional Form for Equations of State | journal: Journal of Physical and Chemical Reference Data | year: 2006
+    into a fla
     """
     CP = require_coolprop()
     lib = Path(CP.__file__).parent / "CoolPropBibTeXLibrary.bib"
@@ -78,7 +76,7 @@ def citation(bibtex_key: str) -> str | None:
 
     out = []
     for field in _BIB_FIELDS:
-        m = re.search(rf"^\s*{field}\s*=\s*[{{\"](.*?)[}}\"],?\s*$", entry, re.M | re.I)
+        m = re.search(rf"^\s*{field}\s*=\s*(.*?),?\s*$", entry, re.M | re.I)
         if m:
             out.append(f"{field}: {m.group(1).strip('{} ')}")
     return " | ".join(out) if out else None

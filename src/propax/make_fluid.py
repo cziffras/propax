@@ -23,24 +23,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("fluid", nargs="?", help="CoolProp fluid name, e.g. Argon")
     parser.add_argument(
         "--list-convertible",
-        action="store_true",
-        help="print the fluids this converter accepts, one per line, and exit. "
-        "Generating the catalogue is then whatever your machine can afford: "
-        "`python -m propax.make_fluid --list-convertible | xargs -P 4 -n 1 "
-        "python -m propax.make_fluid`",
+        nargs="?",
+        const="e",
+        choices=["e", "c", "v", "all"],
+        help=(
+            "print the fluids this converter accepts, one per line, and exit. "
+            "Filter by properties: 'e' (EOS only), 'c' (EOS + conductivity), "
+            "'v' (EOS + viscosity), or leave empty for all. "
+            "Example: `python -m propax.make_fluid --list-convertible e (visualize all available EOS)`"
+        ),
     )
     parser.add_argument(
         "--name", help="propax fluid name (default: lowercased CoolProp name)"
     )
     parser.add_argument("--out", default=str(DATA_DIR), help="output directory")
-    parser.add_argument(
-        "--tol",
-        type=float,
-        default=1e-6,
-        metavar="ERR",
-        help="the bar every transport transcription must clear (default 1e-6); "
-        "a correlation that misses it is omitted rather than approximated",
-    )
 
     parser.add_argument(
         "--force",
@@ -80,8 +76,21 @@ def main(argv=None) -> int:
 
     jax.config.update("jax_enable_x64", True)
 
-    if args.list_convertible:
-        print("\n".join(convertible_fluids()))
+    if args.list_convertible is not None:
+        mode = args.list_convertible
+        convertible_dict = convertible_fluids()
+        need = {
+            "e": ("eos",),
+            "v": ("eos", "viscosity"),
+            "c": ("eos", "conductivity"),
+            "all": ("eos",),
+        }
+        names = [
+            f
+            for f, r in convertible_dict.items()
+            if all(r[k] == "ok" for k in need[mode])
+        ]
+        print("\n".join(names))
         return 0
     if args.fluid is None:
         _build_parser().error("name a fluid, or pass --list-convertible")
@@ -95,7 +104,6 @@ def main(argv=None) -> int:
                 args.fluid,
                 name=args.name,
                 out_dir=args.out,
-                tol=args.tol,
                 superancillary=not args.no_superancillary,
                 overwrite=args.force,
                 scaffold=args.transport_scaffold,

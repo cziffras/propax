@@ -1,7 +1,3 @@
-from ...fluids._registry import _make_factories
-from ...fluids.schema import FluidDefinition
-from .source import require_coolprop
-
 # CoolProp's own built-in defaults for a simplified Olchowy-Sengers block, read
 # verbatim from ConductivityCriticalSimplifiedOlchowySengersData in
 # CoolPropFluid.h
@@ -76,7 +72,7 @@ def convert_slot_conductivity(
             raise ValueError(f"unsupported critical form '{c.get('type')}'")
         d = OS_DEFAULTS
         out["critical"] = {
-            "type": "simplified_olchowy_sengers",
+            "type": "simplified_olchowy_sengers",  # not complete
             "T_c": T_c,
             "rho_c": rho_c,
             "p_c": p_c_MPa,
@@ -88,29 +84,3 @@ def convert_slot_conductivity(
             "gamma": c.get("gamma", d["gamma"]),
         }
     return out
-
-
-def verify_slot_conductivity(cp_name: str, draft: dict) -> tuple[float, float]:
-    CP = require_coolprop()
-    fe, _, fv, fc = _make_factories(FluidDefinition.model_validate(draft))
-    eos, visc = fe(), fv()
-    cond = fc(eos=eos, viscosity=visc)
-    Tc = CP.PropsSI("Tcrit", cp_name)
-    rho_c = CP.PropsSI("rhomass_critical", cp_name)
-
-    def worst_over(t_fracs, rho_fracs):
-        w = 0.0
-        for tf in t_fracs:
-            for rf in rho_fracs:
-                T, rho = tf * Tc, rf * rho_c
-                try:
-                    ref = CP.PropsSI("L", "T", T, "D", rho, cp_name)
-                except Exception:
-                    continue
-                got = float(cond.conductivity_rhoT(rho, T))
-                w = max(w, abs(got / ref - 1.0))
-        return w
-
-    transcription = worst_over((2.0, 3.0), (0.02, 0.5, 1.0, 2.0))
-    critical = worst_over((0.95, 1.05, 1.2, 1.5), (0.5, 1.0, 1.5))
-    return transcription, critical

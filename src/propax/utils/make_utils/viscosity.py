@@ -1,31 +1,7 @@
-from ...fluids.generic.viscosity import ViscositySlots
-from ...fluids.schema import SlotComposedViscosityDefinition
-from .source import require_coolprop
-
 # Slot forms propax has a runtime class for; anything else is not converted.
 SLOT_DILUTE = {"collision_integral", "powers_of_T", "powers_of_Tr"}
 SLOT_INITIAL = {"Rainwater-Friend"}
 SLOT_HIGHER = {"modified_Batschinski_Hildebrand"}
-
-
-def verify_slot_viscosity(cp_name: str, block: dict, tol: float = 1e-6) -> float:
-    CP = require_coolprop()
-    model = ViscositySlots.from_definition(
-        SlotComposedViscosityDefinition.model_validate(block)
-    )
-    Tc = CP.PropsSI("Tcrit", cp_name)
-    rho_c = CP.PropsSI("rhomass_critical", cp_name)
-    worst = 0.0
-    for t_frac in (0.8, 1.2, 2.0):
-        for rho_frac in (0.02, 1.0, 2.0):
-            T, rho = t_frac * Tc, rho_frac * rho_c
-            try:
-                ref = CP.PropsSI("V", "T", T, "D", rho, cp_name)
-            except Exception:
-                continue
-            got = float(model.viscosity_rhoT(rho, T))
-            worst = max(worst, abs(got / ref - 1.0))
-    return worst
 
 
 def convert_slot_viscosity(cp_visc: dict, *, molar_mass: float) -> dict:

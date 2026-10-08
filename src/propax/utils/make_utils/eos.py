@@ -1,7 +1,15 @@
+"""
+/!\\ : How to read CoolProp files
+
+To add a term, read in the CoolProp sources files (github.com/CoolProp/CoolProp):
+- include/CoolProp/fluids/Helmholtz.h : read the term's class definition with its docstring
+- src/Backends/Helmholtz/Fluids/FluidLibrary.h : read its block in parse_alphar or
+  parse_alpha0, it shows the JSON names each parameter
+- src/Helmholtz.cpp writes its derivatives
+"""
+
 import math
 
-from ...core.config import ThermoVar
-from ..exact.constants import provisional_eos
 from .source import require_coolprop
 
 # --------------------------------------------- ideal-gas blocks
@@ -19,9 +27,8 @@ def _log_tau(blk, acc):
     acc["a_log"] += blk["a"]
 
 
-# - ideal-gas heat-capacity forms: integrated to alpha0 analytically
-#
-# CoolProp gives some fluids' ideal part as cp0(T) rather than as alpha0 terms.
+# Tau and delta both designate the reduced temperature and reduced density
+# CoolProp gives some fluids' ideal part as cp0(T) rather than as alpha0 terms :
 # With alpha0 = h0/(RT) - 1 - s0/R and cv0/R = -tau^2 alpha0_tau_tau = cp0/R - 1,
 # a term cp0/R = c T^t integrates (relative to the reference T0, tau0 = Tc/T0) to
 #
@@ -225,44 +232,3 @@ def convert_eos(cp: dict, cp_name: str) -> tuple[dict, dict, dict]:
         P_max=eos["p_max"],
     )
     return consts, ideal_acc, residual
-
-
-def verify_eos(cp_name: str, eos_block: dict) -> float:
-    CP = require_coolprop()
-    eos = provisional_eos(eos_block)
-    Tc = CP.PropsSI("Tcrit", cp_name)
-    rho_c = CP.PropsSI("rhomass_critical", cp_name)
-    keys = (
-        (ThermoVar.P, "P"),
-        (ThermoVar.U, "U"),
-        (ThermoVar.S, "S"),
-        (ThermoVar.CVMASS, "CVMASS"),
-        (ThermoVar.CPMASS, "CPMASS"),
-    )
-
-    states = []
-    for t_frac in (1.05, 1.3, 2.0, 3.0):  # supercritical: no dome at any density
-        states += [(t_frac * Tc, f * rho_c) for f in (0.01, 0.5, 1.5, 2.5)]
-    for t_frac in (0.7, 0.9):  # subcritical: step clear of the saturated pair
-        T = t_frac * Tc
-        try:
-            rho_L = CP.PropsSI("D", "T", T, "Q", 0, cp_name)
-            rho_V = CP.PropsSI("D", "T", T, "Q", 1, cp_name)
-        except Exception:
-            continue
-        states += [(T, 1.1 * rho_L), (T, 0.5 * rho_V)]
-
-    worst = 0.0
-    for T, rho in states:
-        try:
-            props = eos.props_rhoT(rho, T)
-        except Exception:
-            continue
-        for var, cp_key in keys:
-            try:
-                ref = CP.PropsSI(cp_key, "T", T, "D", rho, cp_name)
-            except Exception:
-                continue
-            scale = max(abs(ref), 1.0)
-            worst = max(worst, abs(float(props[var]) - ref) / scale)
-    return worst

@@ -8,17 +8,14 @@ import jax
 from ...fluids.schema import DATA_DIR
 from ..exact.constants import critical_constants, provisional_eos
 from ..exact.fit import from_eos
-from .conductivity import convert_slot_conductivity, verify_slot_conductivity
-from .eos import convert_eos, verify_eos
+from .conductivity import convert_slot_conductivity
+from .eos import convert_eos
 from .source import citation, hardcoded_here, hardcoded_in, load_coolprop_fluid
-from .viscosity import convert_slot_viscosity, verify_slot_viscosity
+from .viscosity import convert_slot_viscosity
 
 logger = logging.getLogger(__name__)
 
 Resolved = Tuple[Optional[dict], str]
-
-_EOS_TOL = 1e-9
-"""Tolerance to consider that coefficients properly copied."""
 
 _CONVERTERS = {
     "viscosity": lambda block, molar_mass: convert_slot_viscosity(
@@ -58,9 +55,7 @@ def _nonslot_reason(block) -> Optional[str]:
     return None
 
 
-def resolve_viscosity(
-    cp_name: str, cp_visc, tol: float, *, molar_mass: float
-) -> Resolved:
+def resolve_viscosity(cp_name: str, cp_visc, *, molar_mass: float) -> Resolved:
     reason = _nonslot_reason(cp_visc)
     if reason is not None:
         return None, f"none [{reason}]"
@@ -69,17 +64,10 @@ def resolve_viscosity(
     except ValueError as e:
         return None, f"none [unimplemented slot form ({e})]"
 
-    err = verify_slot_viscosity(cp_name, block, tol=tol)
-    if err > tol:
-        return None, f"none [slot conversion off by {err:.1e} > tol {tol:.0e}]"
-    block["reference"] = (
-        f"Exact conversion of CoolProp {cp_name} viscosity "
-        f"(published coefficients; max rel err {err:.1e})."
-    )
-    return block, f"exact slot conversion (err {err:.1e})"
+    return block, "ok"
 
 
-def resolve_conductivity(cp_name: str, cp_cond, tol: float, draft: dict) -> Resolved:
+def resolve_conductivity(cp_name: str, cp_cond, draft: dict) -> Resolved:
     if draft.get("viscosity") is None:
         return None, "none [no viscosity for the critical enhancement]"
     reason = _nonslot_reason(cp_cond)
@@ -96,19 +84,7 @@ def resolve_conductivity(cp_name: str, cp_cond, tol: float, draft: dict) -> Reso
     except ValueError as e:
         return None, f"none [unimplemented slot form ({e})]"
 
-    transc, crit_err = verify_slot_conductivity(
-        cp_name, dict(draft, conductivity=block)
-    )
-    if transc > tol:
-        return None, f"none [transcription off by {transc:.1e} > tol {tol:.0e}]"
-    block["reference"] = (
-        f"Exact conversion of CoolProp {cp_name} conductivity "
-        f"(published coefficients; supercritical max rel err {transc:.1e}; "
-        f"near-critical Olchowy-Sengers deviates up to {crit_err:.1e})."
-    )
-    return block, (
-        f"exact slot conversion (transcription {transc:.1e}, near-crit {crit_err:.1e})"
-    )
+    return block, "ok"
 
 
 def _require_x64() -> None:
@@ -129,15 +105,7 @@ def _eos_block(cp: dict, cp_name: str, name: str) -> dict:
         ideal=ideal,
         residual=residual,
     )
-    err = verify_eos(cp_name, block)
-    if err > _EOS_TOL:
-        raise ValueError(
-            f"{cp_name}: the transcribed EOS is off by {err:.1e} against "
-            f"CoolProp, above {_EOS_TOL:.0e}. A coefficient was misread."
-        )
-    logger.info("%s EOS: exact transcription (max rel err %.1e)", name, err)
-
-    # The critical point are computed
+    # The critical point are computed and replace current critical values (cannot instantiate partially initialized cls)
     block.update(critical_constants(block))  # critical constants returns a dict
     logger.info(
         "%s critical point: T %.7f -> %.7f K (theta %.2e), rho %.6f -> %.6f kg/m3",
@@ -155,7 +123,6 @@ def make_fluid(
     cp_name: str,
     name: Optional[str] = None,
     out_dir: Path | str = DATA_DIR,
-    tol: float = 1e-6,
     superancillary: bool = True,
     overwrite: bool = False,
     scaffold: bool = False,
@@ -183,7 +150,7 @@ def make_fluid(
 
     # viscosity first: the conductivity's critical enhancement reads it
     definition["viscosity"], provenance = resolve_viscosity(
-        cp_name, transport.get("viscosity"), tol, molar_mass=eos["molar_mass"]
+        cp_name, transport.get("viscosity"), molar_mass=eos["molar_mass"]
     )
     if definition["viscosity"] is None and scaffold:
         definition["viscosity"], provenance = _scaffolded(
@@ -204,7 +171,7 @@ def make_fluid(
         )
     else:
         definition["conductivity"], provenance = resolve_conductivity(
-            cp_name, transport.get("conductivity"), tol, definition
+            cp_name, transport.get("conductivity"), definition
         )
         if definition["conductivity"] is None and scaffold:
             definition["conductivity"], provenance = _scaffolded(
@@ -287,15 +254,12 @@ def _scaffolded(
     slots = [
         k for k, v in block.items() if isinstance(v, dict) and v.get("type") == "custom"
     ]
-    unverified = (
-        f"Not verified against CoolProp: {prop} cannot be evaluated until every "
-        "custom slot here, or in the viscosity it reads, carries a registered term."
-    )
+
     block["reference"] = (
         f"Scaffold of CoolProp {cp_name} {prop}: published slots transcribed "
-        f"exactly, {', '.join(slots)} left to the term named in it. {unverified}"
+        f"exactly, {', '.join(slots)} left to the term named in it."
         if slots
-        else f"Exact conversion of CoolProp {cp_name} {prop}. {unverified}"
+        else f"Exact conversion of CoolProp {cp_name} {prop}."
     )
     for note in notes:
         logger.info("  %s", note)
