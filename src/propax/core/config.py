@@ -17,22 +17,6 @@ def get_table_path() -> Path:
     return home
 
 
-def get_chunk_size() -> Optional[int]:
-    """How many nodes a mapped build call may hold at once, None for no cap
-
-    Use with :
-
-    `python -m propax.build_tables --chunk-size`
-    """
-    raw = os.environ.get("PROPAX_CHUNK_SIZE")
-    if not raw:
-        return None
-    n = int(raw)
-    if n < 1:
-        raise ValueError(f"PROPAX_CHUNK_SIZE must be at least 1, got {n}")
-    return n
-
-
 @dataclass(frozen=True, slots=True)
 class VarSpec:
     internal_key: str
@@ -84,7 +68,7 @@ _SPECS: Mapping[ThermoVar, VarSpec] = MappingProxyType(
             sat_key_V="h_V",
             linear_in_x=True,
             scale=1e5,
-            unit="H",
+            unit="J.kg",
         ),
         ThermoVar.S: VarSpec(
             "s",
@@ -92,7 +76,7 @@ _SPECS: Mapping[ThermoVar, VarSpec] = MappingProxyType(
             sat_key_V="s_V",
             linear_in_x=True,
             scale=1e3,
-            unit="J/K",
+            unit="J/(kg.K)",
         ),
         ThermoVar.U: VarSpec(
             "u",
@@ -100,7 +84,7 @@ _SPECS: Mapping[ThermoVar, VarSpec] = MappingProxyType(
             sat_key_V="u_V",
             linear_in_x=True,
             scale=1e5,
-            unit="J",
+            unit="J.kg",
         ),
         ThermoVar.D: VarSpec(
             "rho",
@@ -114,7 +98,9 @@ _SPECS: Mapping[ThermoVar, VarSpec] = MappingProxyType(
         ThermoVar.CVMASS: VarSpec("cv", can_be_input=False, unit="J/(K.kg)"),
         ThermoVar.CPMASS: VarSpec("cp", can_be_input=False, unit="J/(K.kg)"),
         ThermoVar.VISCOSITY: VarSpec("viscosity", can_be_input=False, unit="Pa/s"),
-        ThermoVar.CONDUCTIVITY: VarSpec("conductivity", can_be_input=False, unit="S/m"),
+        ThermoVar.CONDUCTIVITY: VarSpec(
+            "conductivity", can_be_input=False, unit="W/(m.K)"
+        ),
     }
 )
 

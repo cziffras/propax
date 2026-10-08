@@ -40,6 +40,8 @@ from propax.fluids._registry import EQS_REGISTRY  # noqa: E402
 from . import grids  # noqa: E402
 from .tolerances import for_precision  # noqa: E402
 
+RUNNING_IN_CI = os.getenv("GITHUB_ACTIONS") == "true"
+
 SAMPLE = 5
 SEED = 42
 
@@ -48,8 +50,14 @@ def _sample_fluids() -> list:
     shipped = sorted(EQS_REGISTRY)
     if not shipped:
         return []
-    n = min(SAMPLE, len(shipped))
-    drawn = np.random.default_rng(SEED).choice(shipped, size=n, replace=False)
+
+    if (
+        not RUNNING_IN_CI
+    ):  # check all fluids in CI, not locally (might be both too long and costly)
+        n = min(SAMPLE, len(shipped))
+        drawn = np.random.default_rng(SEED).choice(shipped, size=n, replace=False)
+    else:
+        drawn = shipped
     return sorted(str(name) for name in drawn)
 
 

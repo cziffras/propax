@@ -7,7 +7,6 @@ jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp  # noqa: E402
 
-from ...core.config import get_chunk_size  # noqa: E402
 from ...core.saturation import Superancillary  # noqa: E402
 from ...fluids._registry import EQS_REGISTRY  # noqa: E402
 
@@ -28,12 +27,8 @@ def _get_fluid_modules(fluid_name: str):
 
 def _mapped(fn, *arrays):
     xs = tuple(jnp.asarray(a) for a in arrays)
-    chunk = get_chunk_size()
-    if chunk is None:
-        out = jax.jit(jax.vmap(fn))(*xs)
-    else:
-        mapped = lambda ts: jax.lax.map(lambda t: fn(*t), ts, batch_size=chunk)  # noqa: E731
-        out = jax.jit(mapped)(xs)
+    mapped = lambda ts: jax.lax.map(lambda t: fn(*t), ts, batch_size=1000)  # noqa: E731
+    out = jax.jit(mapped)(xs)
     return jax.tree_util.tree_map(np.asarray, out)
 
 
