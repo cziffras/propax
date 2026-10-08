@@ -13,36 +13,31 @@
 differentiable, jittable and vmappable, runs on CPU and GPU in both 32 and 64 bit
 precision, and never calls back to Python through `pure_callback`.
 
-It also aims to be transparent. EOS coefficients are taken from the literature, so
-results can be reproduced and compared. The other constants (critical point,
-saturation curve) are recomputed offline from those coefficients, so every value
-matches the EOS exactly.
 
 ## Install
+
+propax is available on pypi, simply run :
 
 ```
 pip install propax
 ```
 
-The runtime is JAX and nothing else of substance. The 126 fluids that convert
-today ship with the package.
-
-One extra is for development only, and the runtime never imports it:
+CoolProp and mpmath are development extras only, also used to transcribe new fluids :
 
 ```
-pip install "propax[coolprop]"   # CoolProp + mpmath, to transcribe new fluids
+pip install "propax[coolprop]"  
 ```
 
 ## Usage
 
 ```python
 import jax
-jax.config.update("jax_enable_x64", True)  # True or False, depending on your needs
+jax.config.update("jax_enable_x64", True)  # True or False, depending on your needs (GPU are often faster with 32bits precision)
 from propax import Interface
 
 props = Interface.create("n-propane")
 
-# accurate: a bracketed solve with automatic phase detection, no table needed
+# accurate: a bracketed solve with phase detection (see supported pairs)
 state, converged = props.flash("P", 2e5, "H", 3e5)
 
 # fast: bicubic table lookup, once the tables are built
@@ -56,28 +51,30 @@ dT_dP = jax.grad(lambda p: props.flash("P", p, "H", 3e5)[0]["T"])(2e5)
 ```
 
 Plain floats work without triggering a recompile, so `propax` can be used like
-CoolProp by people who don't know JAX. It composes with `jax.jit`, `jax.vmap` and
-`jax.grad` as usual.
+CoolProp by people who are not used to JAX. It composes with `jax.jit`, `jax.vmap` and
+`jax.grad` as usual for JAX enjoyers !
 
 Two conventions to know:
 
-- `flash` returns `(state, converged)`. Check the flag.
+- `flash` returns `(state, converged)`, so always check the flag.
 - A two-phase state has `cv` and `cp` set to NaN. They are undefined there
   (temperature stays fixed while heat is added), and a lever-rule number would
   look like an answer when it is not one.
 
 ## How does it relate to CoolProp?
 
-CoolProp is used at development time only: to transcribe fluids, and as the oracle
-in the tests. The runtime never imports it.
+CoolProp is used at development time only: to transcribe fluids, and as a coarse oracle
+in the tests (sometimes `CoolProp` and `propax` do not operate at the same precision level which
+often favors propax). 
 
 Other projects, such as [jaxprop](https://github.com/turbo-sim/jaxprop), wrap
 CoolProp and expose it through `jax.pure_callback()`. This makes CoolProp callable
-from JAX code, but has two costs:
+from JAX code, but has mainly three drawbacks:
 
 - the calls still run on CPU, which rules out GPU or TPU execution;
-- every call pays for array conversion and host/device transfers, and XLA cannot
-  optimize across it.
+- every call pays for array conversion and host/device transfers;
+- the computation graph is split between conversion, XLA optimization cannot
+  be optimal.
 
 Interpolating CoolProp tables in JAX would avoid the callback, but costs a lot of
 memory and loses precision. Derivatives suffer most: autodiff through an
@@ -87,17 +84,17 @@ small. `propax` therefore solves the EOS directly, with iterative solvers.
 Only the EOS coefficients are transcribed, index by index from the published
 correlation. Everything else is solved from them:
 
-- **Critical point:** not the published value, but the point where the correlation
+- **Critical point:** finds the exact point where the correlation
   itself has `dP/drho = d2P/drho2 = 0`.
 - **Saturation curve:** a Chebyshev superancillary fitted offline in extended
   precision (mpmath) against equal pressure and equal fugacity, not against
   CoolProp.
 
-The offline machinery lives in `src/propax/utils/exact/`.
+The offline machinery can be found in `src/propax/utils/exact/`.
 
 ## Fluid catalogue
 
-126 of CoolProp's 136 pure fluids convert today. The saturation fit takes minutes
+125 of CoolProp's 136 pure fluids can be converted. The saturation fit takes minutes
 per fluid, so the catalogue is generated once on CI by
 `.github/workflows/catalogue.yml` and committed, rather than rebuilt by every user.
 

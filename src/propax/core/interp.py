@@ -264,7 +264,9 @@ class BicubicInterpolation(eqx.Module):
 
         data = np.load(path)
         if "extrapolated" not in data.files:
-            raise ValueError(f"{path} was built by an older propax, rebuild it")
+            raise ValueError(
+                f"{path} was built by an older propax, rebuild it with at least v0.2.0"
+            )
         axis_x, axis_y = data["arr_x1"], data["arr_x2"]
 
         channels = [data[k] for k in ("f", "dx1", "dx2", "dx1dx2")]

@@ -15,7 +15,6 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, model_validator
 
 __all__ = [
-    "DiluteRainwaterFriendViscosityDefinition",
     "CollisionIntegralDiluteBlock",
     "PowersOfTDiluteBlock",
     "PowersOfTrDiluteBlock",
@@ -27,33 +26,6 @@ __all__ = [
     "SlotComposedViscosityDefinition",
     "ViscosityDefinition",
 ]
-
-
-class DiluteRainwaterFriendViscosityDefinition(BaseModel):
-    """
-    "dilute_rainwater_friend" (Muzny et al. style):
-      eta = eta0(T) + eta1(T) rho + eta_residual(rho, T)   [returned in Pa.s]
-      eta0: Chapman-Enskog with ln(S*) = sum a_i ln(T*)^i
-      eta1: B*_eta = sum b_i (T*)^-i (Rainwater-Friend)
-      residual: c0 rho_r^2 exp(c1 Tr + c2/Tr + c3 rho_r^2/(c4 + Tr) + c5 rho_r^6)
-    """
-
-    model: Literal["dilute_rainwater_friend"]
-    reference: str = ""
-    rho_sc: float  # scaling density [kg/m3]
-    T_c: float  # K (correlation's own reducing temperature)
-    M: float  # [g/mol]
-    sigma: float  # collision diameter [nm]
-    eps_kb: float  # K, Lennard-Jones energy / k_B
-    a: List[float]  # dilute-gas ln(S*) coefficients
-    b: List[float]  # Rainwater-Friend B* coefficients
-    c: List[float]  # residual coefficients (6 values)
-
-    @model_validator(mode="after")
-    def _check_lengths(self):
-        if len(self.c) != 6:
-            raise ValueError("viscosity residual coefficients 'c' must have 6 entries")
-        return self
 
 
 class CollisionIntegralDiluteBlock(BaseModel):
@@ -193,6 +165,6 @@ class SlotComposedViscosityDefinition(BaseModel):
 
 
 ViscosityDefinition = Annotated[
-    Union[DiluteRainwaterFriendViscosityDefinition, SlotComposedViscosityDefinition],
+    Union[SlotComposedViscosityDefinition],
     Field(discriminator="model"),
 ]

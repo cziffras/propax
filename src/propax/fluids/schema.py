@@ -32,10 +32,8 @@ from .generic.conductivity.schema_cond import (
     ConductivityDiluteBlock,
     ConductivityResidualBlock,
     Eta0AndPolyDiluteBlock,
-    OlchowySengersCriticalEnhancement,
     PolynomialExponentialResidualBlock,
     PolynomialResidualBlock,
-    RationalPolynomialConductivityDefinition,
     RatioOfPolynomialsDiluteBlock,
     SimplifiedOlchowySengersBlock,
     SlotComposedConductivityDefinition,
@@ -49,7 +47,6 @@ from .generic.eos.schema_eos import (
 from .generic.viscosity.schema_visc import (
     CollisionIntegralDiluteBlock,
     CustomTransportTermBlock,
-    DiluteRainwaterFriendViscosityDefinition,
     ModifiedBatschinskiHildebrandBlock,
     PowersOfTDiluteBlock,
     PowersOfTrDiluteBlock,

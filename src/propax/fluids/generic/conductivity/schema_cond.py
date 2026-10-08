@@ -5,8 +5,6 @@ from pydantic import BaseModel, Field, model_validator
 from ..viscosity.schema_visc import CustomTransportTermBlock
 
 __all__ = [
-    "OlchowySengersCriticalEnhancement",
-    "RationalPolynomialConductivityDefinition",
     "Eta0AndPolyDiluteBlock",
     "RatioOfPolynomialsDiluteBlock",
     "PolynomialExponentialResidualBlock",
@@ -17,43 +15,6 @@ __all__ = [
     "SlotComposedConductivityDefinition",
     "ConductivityDefinition",
 ]
-
-
-class OlchowySengersCriticalEnhancement(BaseModel):
-    nu: float = 0.63
-    gamma: float = 1.2415
-    Gamma: float = 0.052
-    chi_0: float = 1.5e-10  # m
-    RD: float = 1.01
-    qd_inv: float  # m
-
-
-class RationalPolynomialConductivityDefinition(BaseModel):
-    """
-    "rational_polynomial_critical" (https://doi.org/10.1063/1.3606499):
-
-      lambda = lambda0(T) + delta_lambda(rho, T) + delta_lambda_c(rho, T)
-      lambda0: sum(A1_i Tr^i) / sum(A2_i Tr^i)
-      delta_lambda: sum_{i=1..n} (B1_i + B2_i Tr) rho_r^i
-      delta_lambda_c: Olchowy-Sengers (needs EOS + viscosity)
-    """
-
-    model: Literal["rational_polynomial_critical"]
-    reference: str = ""
-    T_c: float  # K
-    rho_c: float  # kg/m3
-    p_c: float  # MPa (used in the crossover expression)
-    A1: List[float]
-    A2: List[float]
-    B1: List[float]
-    B2: List[float]
-    critical: OlchowySengersCriticalEnhancement
-
-    @model_validator(mode="after")
-    def _check_lengths(self):
-        if len(self.B1) != len(self.B2):
-            raise ValueError("B1 and B2 must have the same length")
-        return self
 
 
 class Eta0AndPolyDiluteBlock(BaseModel):
@@ -180,6 +141,6 @@ class SlotComposedConductivityDefinition(BaseModel):
 
 # alias
 ConductivityDefinition = Annotated[
-    Union[RationalPolynomialConductivityDefinition, SlotComposedConductivityDefinition],
+    Union[SlotComposedConductivityDefinition],
     Field(discriminator="model"),
 ]

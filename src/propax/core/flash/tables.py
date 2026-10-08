@@ -25,6 +25,8 @@ def call_interp(interpolators, pair_to_table_map, tvar1, val1, tvar2, val2):
     """
     Interpolated outputs for a pair, on the branch the state belongs to, and
     whether they rest on solved nodes only.
+
+    Uses a Bicubic interpolating tables built offline, see interp.py and assemble.py.
     """
     key = frozenset({tvar1, tvar2})
     if key not in pair_to_table_map:

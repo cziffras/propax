@@ -1,2 +1,1 @@
-from .rational_polynomial import RationalPolynomialConductivity
 from .slots import ConductivitySlots

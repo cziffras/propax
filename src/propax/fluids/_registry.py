@@ -19,20 +19,16 @@ from typing import Callable, Dict, Tuple
 
 from .generic import (
     ConductivitySlots,
-    DiluteRainwaterFriendViscosity,
     HelmholtzEOS,
-    RationalPolynomialConductivity,
     ViscositySlots,
 )
 from .schema import DATA_DIR, FluidDefinition, discover_fluid_files, load_fluid_file
 
 # one eqx.Module class per supported correlation family (see schema.py)
 _VISCOSITY_MODELS = {
-    "dilute_rainwater_friend": DiluteRainwaterFriendViscosity,
     "slot_composed": ViscositySlots,
 }
 _CONDUCTIVITY_MODELS = {
-    "rational_polynomial_critical": RationalPolynomialConductivity,
     "slot_composed": ConductivitySlots,
 }
 
