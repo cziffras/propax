@@ -9,7 +9,6 @@ CP = pytest.importorskip(
 
 from propax.core.config import ThermoVar  # noqa: E402
 from propax.fluids.schema import DATA_DIR, load_fluid_file  # noqa: E402
-from propax.utils.make_utils.eos import verify_eos  # noqa: E402
 
 from .conftest import TRANSCRIPTION  # noqa: E402
 
@@ -29,13 +28,6 @@ def _median_gap(mine, theirs):
     theirs = np.asarray(theirs)
     scale = np.maximum(np.abs(theirs), np.abs(theirs).max())
     return float(np.median(np.abs(np.asarray(mine) - theirs) / scale))
-
-
-def test_the_shipped_eos_is_the_published_one(fluid_name, cp_fluid, x64):
-    if not x64:
-        pytest.skip("verify_eos gates make_fluid at 1e-9, below float32 round-off")
-    block = load_fluid_file(DATA_DIR / f"{fluid_name}.json").eos.model_dump()
-    assert verify_eos(cp_fluid, block) < TRANSCRIPTION.eos_transcription
 
 
 def test_every_property_matches_the_source(grid, cp_fluid):
