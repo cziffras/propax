@@ -16,7 +16,6 @@ from .viscosity import convert_slot_viscosity, verify_slot_viscosity
 logger = logging.getLogger(__name__)
 
 Resolved = Tuple[Optional[dict], str]
-"""A transport block and why it is what it is. `None` means EOS-only."""
 
 _EOS_TOL = 1e-9
 """Tolerance to consider that coefficients properly copied."""
@@ -36,7 +35,6 @@ _REGISTER = {
     "viscosity": "register_viscosity_higher_order",
     "conductivity": "register_conductivity_residual",
 }
-"""Where a custom slot of each property has to be registered."""
 
 
 def _nonslot_reason(block) -> Optional[str]:
@@ -82,8 +80,6 @@ def resolve_viscosity(
 
 
 def resolve_conductivity(cp_name: str, cp_cond, tol: float, draft: dict) -> Resolved:
-    """`draft` carries the already-resolved eos and viscosity, both of which the
-    Olchowy-Sengers critical term needs, so no viscosity means no conductivity."""
     if draft.get("viscosity") is None:
         return None, "none [no viscosity for the critical enhancement]"
     reason = _nonslot_reason(cp_cond)
@@ -124,7 +120,6 @@ def _require_x64() -> None:
 
 
 def _eos_block(cp: dict, cp_name: str, name: str) -> dict:
-    """The transcribed coefficients, plus the constants they imply."""
     consts, ideal, residual = convert_eos(cp, cp_name)
     block = dict(
         reference=(
@@ -235,7 +230,6 @@ def fit_superancillary(path: Path | str) -> Path:
     _require_x64()
     path = Path(path)
     eos_block = json.loads(path.read_text())["eos"]
-    # the curve is what this replaces, whatever layout it was stored in
     eos_block.pop("superancillary", None)
     fit = from_eos(provisional_eos(eos_block))
     logger.info("%s superancillary: %s", path.stem, fit)
@@ -243,7 +237,6 @@ def fit_superancillary(path: Path | str) -> Path:
 
 
 def _bespoke_slots(block: dict) -> dict:
-    """Slot name -> the correlation CoolProp hardcodes there."""
     return {
         name: hardcoded_in(slot)
         for name, slot in block.items()
@@ -254,7 +247,6 @@ def _bespoke_slots(block: dict) -> dict:
 def _scaffold_property(
     prop: str, block, name: str, eos: dict
 ) -> Tuple[Optional[dict], list]:
-    """The convertible slots of one property, plus a note per slot that is not."""
     if not isinstance(block, dict):
         return None, [f"{prop}: CoolProp has no correlation for this fluid"]
     whole = hardcoded_here(block)

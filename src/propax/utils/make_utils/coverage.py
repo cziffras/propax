@@ -1,51 +1,14 @@
-"""
-Dev-time audit of how much of the CoolProp catalogue propax can represent.
-
-For every CoolProp fluid this reports, per model (EOS / viscosity /
-conductivity), whether propax can evaluate it from *published* coefficients
-(no refit, no new runtime physics), and if not, which functional family is the
-blocker. It is an analysis tool, not part of the runtime; it needs the
-`[coolprop]` extra (`pip install -e ".[coolprop]"`).
-
-Standard CoolProp API used (all public):
-  get_global_param_string("fluids_list")   -> canonical fluid names
-  get_fluid_param_string(fluid, "JSON")    -> full definition: EOS.alpha0/alphar
-        (term "type" tags) and TRANSPORT.{viscosity,conductivity}
-  get_BibTeXKey(fluid, key)                -> reference key (not used here)
-
-Caveat: the *shape* of that JSON is CoolProp's internal fluid-file schema, not
-a documented-stable contract. It is parsed defensively and the CoolProp
-version is printed with every summary.
-
-The "supported" sets are the ground truth from propax itself: the EOS term
-handlers registered in `make_utils.eos`, and the transport sub-models that
-propax's built-in fluid (hydrogen) uses. EOS support is reported in tiers,
-distinguishing a genuine physics gap (an unsupported *residual* term) from a
-mere converter-registration gap (an ideal-gas term whose math propax already
-evaluates under a different CoolProp type name, e.g. PlanckEinstein).
-
-    python -m propax.make_utils.coverage      # print the summary
-    from propax.make_utils.coverage import coverage
-    rows = coverage()                          # list of per-fluid dicts
-"""
-
 import json
 from collections import Counter
 
 import CoolProp
 from CoolProp.CoolProp import get_fluid_param_string, get_global_param_string
 
-# Read straight from the converter's registries rather than duplicated here:
-# these sets used to be a hand-kept copy and had already drifted once, after
-# handlers were added. Now the audit cannot disagree with the code.
 from .eos import IDEAL_BLOCK_HANDLERS, RESIDUAL_BLOCK_HANDLERS, convert_eos
 from .source import hardcoded_in, load_coolprop_fluid
 
 EOS_IDEAL_NATIVE = set(IDEAL_BLOCK_HANDLERS)
-# residual is the real physics gate.
 EOS_RESID_OK = set(RESIDUAL_BLOCK_HANDLERS)
-# ideal gas given as Cp0(T) (or a generalized Einstein term): needs the
-# standard Cp0 -> alpha0 integration, but no new runtime physics.
 EOS_IDEAL_CP0 = {
     "IdealGasHelmholtzCP0PolyT",
     "IdealGasHelmholtzCP0Constant",
@@ -53,11 +16,6 @@ EOS_IDEAL_CP0 = {
     "IdealGasHelmholtzPlanckEinsteinGeneralized",
 } - EOS_IDEAL_NATIVE
 
-# - transport sub-model tags propax can evaluate natively ----------------
-# Read from the slot converters, for the same reason as the EOS handlers above:
-# the hand-kept copy that used to sit here had drifted, and reported three
-# viscosity and two conductivity forms as blocking that `convert_slot_*` in
-# fact transcribes  understating viscosity coverage by a factor four.
 from .conductivity import (  # noqa: E402
     SLOT_COND_CRITICAL,
     SLOT_COND_DILUTE,
@@ -114,7 +72,7 @@ def _classify_eos(eos):
     if not ar:
         return ("no-data", set())
     resid_bad = ar - EOS_RESID_OK
-    if resid_bad:  # a real physics gap dominates
+    if resid_bad:
         return ("residual-blocked", resid_bad)
     ideal_extra = a0 - EOS_IDEAL_NATIVE
     if not ideal_extra:
@@ -125,8 +83,6 @@ def _classify_eos(eos):
 
 
 def coverage():
-    """Return one dict per CoolProp fluid with the EOS / viscosity /
-    conductivity classification and the blocking families for each."""
     rows = []
     for fl in get_global_param_string("fluids_list").split(","):
         try:
@@ -156,7 +112,6 @@ _TRANSPORT_ORDER = ("covered", "partial", "hardcoded", "untyped", "no-data")
 
 
 def tally(rows, key: str, order) -> Counter:
-    """How many fluids fall in each status, for one of the three axes."""
     return Counter(r[key] for r in rows if r[key] in order)
 
 
@@ -187,7 +142,6 @@ def _blocker_lines(entries) -> list:
 
 
 def report(rows=None) -> str:
-    """The coverage summary as text, so it can be tested or written to a file."""
     rows = coverage() if rows is None else rows
     out = [f"CoolProp {CoolProp.__version__}  |  {len(rows)} fluids", ""]
 

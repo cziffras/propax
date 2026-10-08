@@ -1,14 +1,3 @@
-"""The whole loop a user walks to supply a transport term propax has no class for.
-
-`make_fluid --transport-scaffold` leaves a slot like
-
-    "higher_order": {"type": "custom", "name": "<fluid>_higher_order", "params": {...}}
-
-in the fluid file, and the fluid does not load until something is registered under
-that name. These tests are the smallest complete example of doing so, and they are
-what the docs point at.
-"""
-
 import json
 
 import equinox as eqx
@@ -33,8 +22,6 @@ from propax.utils.make_utils import make_fluid
 
 
 class LinearHigherOrder(eqx.Module):
-    """contribution(rho_molar, T, eta0) -> Pa.s, built as cls(**params)"""
-
     a: float
     b: float
 
@@ -43,11 +30,6 @@ class LinearHigherOrder(eqx.Module):
 
 
 def _a_fluid_carrying_viscosity() -> str:
-    """A shipped fluid whose definition has a viscosity block to override.
-
-    Only 15 of the 125 shipped fluids carry one, and the first in catalogue
-    order is not among them, so this cannot be `next(iter(...))`.
-    """
     for name, path in discover_fluid_files().items():
         if load_fluid_file(path).viscosity is not None:
             return name

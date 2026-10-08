@@ -1,8 +1,3 @@
-"""
-`fast_flash` reads a table where `flash` brackets, so the two can
-disagree about which pairs work.
-"""
-
 from itertools import combinations
 
 import pytest
@@ -11,8 +6,6 @@ from propax import Interface
 from propax.core.config import TABLE_REGISTRY, ThermoVar
 from propax.core.flash.dispatch import INVALID_PAIRS, check_supported
 
-# a quality is read straight off the saturation curve, and (D, T) is the state
-# already: neither reaches an interpolator
 NO_TABLE_NEEDED = {"saturated", "natural"}
 # the density jumps across P_sat(T), which no bicubic holds, and the flash is
 # already a 1D solve there + this flash is almost as fast as a lookup in practice

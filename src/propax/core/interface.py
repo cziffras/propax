@@ -37,7 +37,6 @@ logger = logging.getLogger(__name__)
 
 
 def _dtype():
-    """The float the active precision computes in."""
     return jnp.float64 if jax.config.read("jax_enable_x64") else jnp.float32
 
 
@@ -51,8 +50,6 @@ class Interface(eqx.Module):
     """
 
     eos: HelmholtzEOS
-    # None when the fluid has no transport correlation, or when the interface
-    # was built with with_transport=False (EOS-only)
     viscosity: Optional[eqx.Module]
     conductivity: Optional[eqx.Module]
     saturation: Superancillary
@@ -60,10 +57,8 @@ class Interface(eqx.Module):
     # Stores all loaded vectorized tables: "Table_D_U" -> BicubicInterpolation
     interpolators: Dict[str, BicubicInterpolation]
 
-    # which table answers a given unordered pair
     table_for_pair: Dict[frozenset, str] = eqx.field(static=True)
 
-    # what `build_tables` would be given to fill in a missing table
     fluid_name: str = eqx.field(static=True, default="")
 
     @classmethod
@@ -137,11 +132,6 @@ class Interface(eqx.Module):
 
         built = get_table_path() / key_name
 
-        # Every table is loaded: `flash` brackets its way to the answer and
-        # asks for none of them, so the only caller left is `fast_flash`,
-        # which wants whichever pair it is handed. The dome table beside each
-        # one carries the mixture branch on its own axes, without which a
-        # lookup inside the dome reads the single-phase surface and is wrong.
         def load(name: str) -> BicubicInterpolation:
             return BicubicInterpolation.create(str(built / name), dtype=table_dtype)
 
@@ -156,9 +146,6 @@ class Interface(eqx.Module):
             axes = (spec.x_axis.variable, spec.y_axis.variable)
             table_for_pair[frozenset(axes)] = spec.name
 
-        # Not an error: `flash` brackets its way to the answer without
-        # reading a table, so a fresh install is usable before anything is
-        # built. Only `fast_flash` needs them, and it says so itself.
         if missing:
             logger.info(
                 "%s: %d of %d table(s) not loaded from %s, `fast_flash` is "
@@ -184,7 +171,6 @@ class Interface(eqx.Module):
 
     @eqx.filter_jit
     def _interp(self, tvar1, val1, tvar2, val2) -> Tuple[PropertyMap, jaxBool]:
-        """The interface's one door onto the interpolation tables."""
         return call_interp(
             self.interpolators, self.table_for_pair, tvar1, val1, tvar2, val2
         )
@@ -265,10 +251,6 @@ class Interface(eqx.Module):
             T, P = properties[ThermoVar.T], properties[ThermoVar.P]
             P_sat = self.saturation.state_T(jnp.minimum(T, self.saturation.T_crit)).P
 
-            # two independent yes/no questions: is T past the critical point,
-            # and is the state on the dense side of the line that matters at
-            # that T (the critical pressure above P_crit, the saturation
-            # pressure below it)
             hot = T >= self.eos.T_crit
             dense = jnp.where(hot, P >= self.eos.P_crit, P >= P_sat)
 
@@ -353,8 +335,6 @@ class Interface(eqx.Module):
         # an extrapolated temperature can leave the EOS domain, where it returns NaN
         T = jnp.clip(jnp.asarray(state[ThermoVar.T]), self.eos.T_triple, self.eos.T_max)
 
-        # rho against the saturated densities at T names the phase: no quality
-        # channel needed, and no dome mask to interpolate across
         sat = self.saturation.state_T(T)
         rho_L, rho_V = sat.L[ThermoVar.D], sat.V[ThermoVar.D]
         two_phase = sat.is_valid & (rho < rho_L) & (rho > rho_V)
@@ -436,7 +416,6 @@ class Interface(eqx.Module):
         transport: bool = False,
         dtype: Type[jnp.dtype] = jnp.float64,
     ) -> Tuple[PropertyMap, jaxBool]:
-        """The traced body behind `flash`, past the name and dtype handling."""
         check_supported(tvar1, tvar2)
 
         if transport and (self.viscosity is None or self.conductivity is None):
@@ -468,8 +447,6 @@ class Interface(eqx.Module):
         if degenerate_pair:
             is_biphasic, T_two_phase, x_two_phase = jnp.array(False), jnp.inf, jnp.inf
         else:
-            # One two-phase solve serves as both the phase test and the
-            # two-phase branch result
             is_biphasic, T_two_phase, x_two_phase = solve_two_phase(
                 self.eos,
                 self.saturation,

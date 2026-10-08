@@ -22,17 +22,6 @@ from .schema_eos import HelmholtzEOSDefinition
 
 
 class HelmholtzEOS(eqx.Module):
-    """
-    Multiparameter Helmholtz equation of state for a pure fluid, built from a
-    parsed fluid definition file (see `propax.fluids.schema`).
-
-    The reduced Helmholtz energy is assembled compositionally: `ideal_terms`
-    and `residual_terms` are tuples of `IdealTerm` / `ResidualTerm` modules
-    (see above) whose contributions are summed in `alpha0` / `alphar`. This
-    class encodes the assembly and the thermodynamics; each functional form
-    lives in its own term class.
-    """
-
     # Constants
     R_u: float
     molar_mass: float  # kg/mol
@@ -48,7 +37,6 @@ class HelmholtzEOS(eqx.Module):
     T_max: float  # K, upper end of the EOS's stated validity range
     P_max: float  # Pa
 
-    # Helmholtz energy, as sums of term modules
     ideal_terms: tuple  # tuple[IdealTerm, ...] -> alpha0
     residual_terms: tuple  # tuple[ResidualTerm, ...] -> alphar
 
@@ -157,15 +145,6 @@ class HelmholtzEOS(eqx.Module):
         return total
 
     def _thermo_state(self, delta, tau):
-        """Both potentials and every derivative the thermodynamics needs.
-
-        Summed term by term from the closed forms each family carries, rather
-        than obtained by differentiating the sums. The derivatives share the
-        powers and the exponential with the value, so a term yields all six for
-        little more than its own evaluation, where a Hessian by
-        forward-over-reverse costs several passes  reading dP/drho alongside
-        P used to triple the price of an evaluation.
-        """
         a0 = a0_t = a0_tt = jnp.asarray(0.0)
         for term in self.ideal_terms:
             v, v_t, v_tt = term.tau_derivatives(delta, tau)
@@ -289,8 +268,6 @@ class HelmholtzEOS(eqx.Module):
         cv_mol = -self.R_u * tau**2 * (derivs["a0_tt"] + derivs["ar_tt"])
         cv_spec = cv_mol / self.molar_mass  # J/(kg·K)
 
-        # Cp. Both factors are derivatives of the pressure in disguise:
-        # dP/dT|_rho carries `dP_dT_factor` and dP/drho|_T carries `dP_drho_factor`
         dP_dT_factor = 1 + delta * derivs["ar_d"] - delta * tau * derivs["ar_dt"]
         dP_drho_factor = 1 + 2 * delta * derivs["ar_d"] + delta**2 * derivs["ar_dd"]
         cp_mol = cv_mol + self.R_u * (dP_dT_factor**2 / dP_drho_factor)

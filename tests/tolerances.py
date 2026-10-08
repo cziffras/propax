@@ -17,16 +17,11 @@ class Transcription(PrecisionScaled):
 
     criticality_first: float = field(default=1e-9, metadata={"loosest": 1e-3})
     criticality_second: float = field(default=1e-6, metadata={"loosest": 1e-2})
-    """dP/drho and d2P/drho2 at the solved critical point, scaled by the
-    pressure's own size there, so this reads `flat to the last digits`."""
-
     critical_point_vs_source: float = field(default=1e-9, metadata={"scales": False})
 
 
 @dataclass(frozen=True)
 class RightRoot(PrecisionScaled):
-    """Whether the root propax converged to is the physical one."""
-
     temperature: float = field(default=1e-5, metadata={"loosest": 1e-3})
     density: float = field(default=1e-5, metadata={"loosest": 1e-3})
     energy: float = field(default=1e-5, metadata={"loosest": 1e-3})
@@ -37,8 +32,6 @@ class RightRoot(PrecisionScaled):
 
 @dataclass(frozen=True)
 class Residual(PrecisionScaled):
-    """What the flash owes on its own equation, with no oracle involved."""
-
     slack: float = field(default=10.0, metadata={"scales": False})
     solved_fraction: float = field(default=0.99, metadata={"scales": False})
 

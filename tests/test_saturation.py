@@ -48,7 +48,6 @@ class TestTheCurveIsConsistentWithItself:
         assert worst < RESIDUAL.equal_fugacity
 
     def test_is_valid_covers_exactly_the_dome(self, saturation):
-        """Closed at both ends."""
         T_min, T_crit = float(saturation.T_min), float(saturation.T_crit)
         step = 1e-4 * (T_crit - T_min)
         for T in (T_min, T_crit):

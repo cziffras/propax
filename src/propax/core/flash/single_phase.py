@@ -16,18 +16,15 @@ from ..saturation import Superancillary
 from ..tolerances import TOL
 from .dispatch import both_natural_pair, is_nested_pair, one_dim_known_var
 
-# What a residual returns where the EOS has nothing to say
 _OUT_OF_DOMAIN = 1e6
 
 
 class _IsobarWalk(NamedTuple):
-    """What `_solve_along_isobar` carries from one step to the next."""
-
-    lo: Array  # the bracket, tightened at every step
+    lo: Array
     hi: Array
-    T: Array  # where the next residual is evaluated
-    T_last: Array  # the two temperatures already visited and the densities
-    rho_last: Array  # found there, which the secant extrapolates through
+    T: Array
+    T_last: Array
+    rho_last: Array
     T_before: Array
     rho_before: Array
     step: Array
@@ -55,7 +52,6 @@ def _one_dim_slope(key: str, solve_for_T: bool, props, derivs) -> Array:
     if not solve_for_T:
         if key == ThermoVar.P.internal_key:
             return derivs["dP_drho"]
-        # (T, S) also solves for density, and its slope runs the other way
         rho = props[ThermoVar.D]
         return -derivs["dP_dT"] / (rho * rho)
     cv = props[ThermoVar.CVMASS]
@@ -116,16 +112,6 @@ def _one_dim_root_jvp(key, scale, solve_for_T, primals, tangents):
 def _bracket_for_T(
     eos: HelmholtzEOS, saturation: Superancillary, rho: Array
 ) -> Tuple[Array, Array]:
-    """[T_lo, T_hi] holding the single root of y(rho, T) = y, and no other.
-
-    c_v > 0 makes the target monotone in T, but only outside the dome. The floor
-    is therefore T_sat(rho), which the superancillary inverts directly, and the
-    whole range for a density that never meets the curve.
-
-    Just below T_sat rather than on it: a saturated state has its root exactly
-    there, and a floor solved to tolerance can land above, outside its own
-    bracket.
-    """
     T_lo, T_hi = (jnp.asarray(b) for b in T_bounds(eos))
     T_sat, on_dome = saturation.T_of_rho(jax.lax.stop_gradient(rho))
     lo = pick(on_dome, T_sat * (1.0 - TOL.acc.sat_edge_nudge), T_lo)
@@ -139,16 +125,6 @@ def _bracket_for_rho(
     tvar_other: ThermoVar,
     val_other: Array,
 ) -> Tuple[Array, Array]:
-    """[rho_lo, rho_hi] on one side of the dome, where dP/drho >= 0 holds.
-
-    Which side `val_other` says: against P_sat(T) when it is the pressure, and
-    against the midpoint of the saturated pair when it is caloric. Above T_crit
-    there is no branch to anchor on, and anchoring would invert the bracket.
-
-    Colder than the curve is fitted for, the pair is read at its floor instead.
-    rho_L falls with T and rho_V rises, so both ends then sit outside the true
-    ones and the bracket still holds its root.
-    """
     rho_lo, rho_hi = (jnp.asarray(b) for b in rho_bounds(saturation))
     on_dome = T < saturation.T_crit
     saturated = saturation.state_T(jnp.clip(T, saturation.T_min, saturation.T_crit))
@@ -175,17 +151,11 @@ def solve_1d(
     val_other: Array,
     is_inactive: jaxBool,
 ) -> Tuple[jaxBool, Array, Array]:
-    """Single-phase solve when one of (D, T) is given, so one unknown remains.
-
-    `_bracket_for_T` and `_bracket_for_rho` build the interval, `_one_dim_root`
-    walks it and carries the derivative.
-    """
     solve_for_T = tvar_known == ThermoVar.D
     scale = tvar_other.spec.scale
     key = tvar_other.internal_key
 
     def as_rho_T(unknown, known):
-        # rho first, T second, always
         return (known, unknown) if solve_for_T else (unknown, known)
 
     def residual(x, args):
@@ -203,7 +173,6 @@ def solve_1d(
     else:
         lo, hi = _bracket_for_rho(eos, saturation, known_safe, tvar_other, val_other)
 
-    # an inactive lane must still be handed a target its bracket can hold
     dummy_target = jax.lax.stop_gradient(
         eos.props_rhoT(*as_rho_T(0.5 * (lo + hi), known_safe))[key]
     )
@@ -261,7 +230,6 @@ def _density_at_TP(
     lo, hi = _bracket_for_rho(eos, saturation, T, ThermoVar.P, P)
 
     if seed is None:
-        # a liquid bracket starts on rho_L, above the domain's own floor
         rho_lo, _ = rho_bounds(saturation)
         seed = pick(lo > rho_lo, lo, P / (eos.R_spec * T))
 
@@ -274,9 +242,6 @@ def _density_at_TP(
             derivs["dP_drho"] / ThermoVar.P.spec.scale,
         )
 
-    # `newton_loop`, whose bracket tightens at every step: a wrong density
-    # here flips the sign of the enclosing residual, which a bisection cannot
-    # survive, having already discarded the half holding the root
     rho, _ = newton_loop(
         residual,
         lo,
@@ -296,17 +261,6 @@ def isobar_bounds(
     P: Array,
     y: Array,
 ) -> Tuple[Array, Array]:
-    """The stretch of the isobar P that can hold a single-phase state of y.
-
-    T_sat(P) cuts the isobar in two and the caloric variable says which half:
-    below the saturated liquid value a compressed liquid, above the saturated
-    vapour value a superheated gas. Supercritically no cut is made.
-
-    An empty interval says no single-phase state on this isobar carries this y,
-    which the two-phase branch then answers or nobody does. The endpoint is
-    nudged off the line rather than laid on it: there `P > P_sat(T)` is a tie,
-    and a root on the line belongs to `solve_two_phase` anyway.
-    """
     T_lo, T_hi = (jnp.asarray(b) for b in T_bounds(eos))
     saturated = saturation.state_P(P)
     subcritical = (P < eos.P_crit) & saturated.is_valid
@@ -373,12 +327,7 @@ def _solve_along_isobar(
             rho,
         )
 
-    # the first evaluation has nothing to carry, so it solves its density cold
     f_lo, _, rho_first = residual(lo, None)
-
-    # No early exit on a bracket whose ends share a sign: the ends are where
-    # the enclosed density solve is least reliable, so the caller judges the
-    # answer by its residual instead.
 
     def keep_going(walk: _IsobarWalk):
         denom = relative_scale(walk.T)
@@ -404,7 +353,6 @@ def _solve_along_isobar(
         )
         f, dfdT, rho = residual(walk.T, seed)
 
-        # tighten first, then judge the step against the tightened bracket
         same = f * f_lo > 0.0
         lo_new = pick(same, walk.T, walk.lo)
         hi_new = pick(same, walk.hi, walk.T)
@@ -494,33 +442,12 @@ def solve_nested(
     val_other: Array,
     is_inactive: jaxBool,
 ) -> Tuple[jaxBool, Array, Array]:
-    """(P, X) for X in {H, S, U}, by a bracket on T over a bracket on rho.
-
-    Neither P nor the caloric variable is natural, so no single bracket exists.
-    Two stages do: along an isobar T is the only freedom left, and
-
-        dh/dT|_P = c_p > 0        ds/dT|_P = c_p / T > 0
-
-    are thermal stability, proven. (P, U) rides on the same construction with
-    du/dT|_P = c_p - P v alpha, which is not proven but was monotone on every
-    isobar measured (docs/flash.md).
-
-    T_sat(P) splits the isobar in two, and which half holds the state is read
-    off the saturated values at that temperature  below the liquid one it is
-    a compressed liquid, above the vapour one a superheated gas, and between
-    them the state is two-phase and this is not asked.
-
-    Each outer evaluation costs an inner solve. That is the price of knowing
-    which root was found, which a 2D Newton cannot say.
-    """
     key = tvar_other.internal_key
     scale = float(tvar_other.spec.scale)
 
     inputs_finite = jnp.isfinite(val_P) & jnp.isfinite(val_other)
     route_dummy = is_inactive | jnp.logical_not(inputs_finite)
     P_safe = pick(route_dummy, eos.P_crit * 0.5, val_P)
-    # an inactive lane needs a target its bracket can hold: the critical point
-    # is in domain for every fluid and costs one EOS call
     dummy_target = jax.lax.stop_gradient(
         eos.props_rhoT(eos.rho_crit_mass, eos.T_crit)[key]
     )
@@ -555,16 +482,8 @@ def solve_single_phase(
     val2: Array,
     is_inactive: jaxBool,
 ) -> Tuple[jaxBool, Array, Array]:
-    """(ok, rho, T) off the dome, for every supported pair but a quality read.
-
-    Every route converges without an initial guess, so none needs a table:
-    - (D, T) are the EOS' own variables, the state is the input
-    - P fixes an isobar the caloric variable is monotone along, `solve_nested`
-    - with D or T given only the other member of (rho, T) is unknown, `solve_1d`
-    """
     if both_natural_pair(tvar1, tvar2):
         rho, T = (val1, val2) if tvar1 == ThermoVar.D else (val2, val1)
-        # no solver runs here, so `is_inactive` has to be reported on its own
         ok = (
             jnp.isfinite(rho)
             & jnp.isfinite(T)

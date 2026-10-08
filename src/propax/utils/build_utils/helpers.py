@@ -27,7 +27,6 @@ def _get_fluid_modules(fluid_name: str):
 
 
 def _mapped(fn, *arrays):
-    """`fn` over every element of `arrays`, at most PROPAX_CHUNK_SIZE at a time."""
     xs = tuple(jnp.asarray(a) for a in arrays)
     chunk = get_chunk_size()
     if chunk is None:
@@ -69,7 +68,6 @@ def fill_ghost(arr_x1, arr_x2, f, dx1, dx2, dx1dx2, ok):
     grown = ok.copy()
     out = [a.copy() for a in (f, dx1, dx2, dx1dx2)]
     for tgt, src, sx, sy in steps:
-        # a node is filled once, from a node known before this call
         take = ~ok[tgt] & ok[src] & ~grown[tgt]
         if not take.any():
             continue

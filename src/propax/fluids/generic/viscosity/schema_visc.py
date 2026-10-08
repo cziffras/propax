@@ -1,15 +1,3 @@
-"""
-Viscosity schema.
-
-Two families, discriminated on the `model` tag:
-  - "dilute_rainwater_friend": the fitted Muzny-style whole-correlation;
-  - "slot_composed": one form per density regime (dilute / initial-density /
-    higher-order), mirroring how CoolProp stores transport.
-
-`CustomTransportTermBlock` (a user-supplied registered JAX term) lives here
-because it is the shared `custom` slot form; `schema_cond` imports it too.
-"""
-
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
@@ -24,7 +12,6 @@ __all__ = [
     "ViscosityDiluteBlock",
     "ViscosityHigherOrderBlock",
     "SlotComposedViscosityDefinition",
-    "ViscosityDefinition",
 ]
 
 
@@ -123,13 +110,6 @@ class ModifiedBatschinskiHildebrandBlock(BaseModel):
 
 
 class CustomTransportTermBlock(BaseModel):
-    """A transport slot supplied by the user as a registered JAX term.
-
-    For a literature/hardcoded correlation propax has no built-in class for:
-    `name` keys into the transport term registry (see `generic.transport_registry`),
-    `params` is passed by the user to the registered builder.
-    """
-
     type: Literal["custom"]
     name: str
     params: Dict[str, Any] = Field(default_factory=dict)
@@ -151,20 +131,9 @@ ViscosityHigherOrderBlock = Annotated[
 
 
 class SlotComposedViscosityDefinition(BaseModel):
-    """
-    "slot_composed": eta = eta0(T) + eta1(T) rho + delta_eta(rho, T), each slot
-    naming its own form
-    """
-
-    model: Literal["slot_composed"]
+    model: str = "slot_composed"
     reference: str = ""
     molar_mass: float  # kg/mol
     dilute: ViscosityDiluteBlock
     initial_density: Optional[RainwaterFriendInitialDensityBlock] = None
     higher_order: Optional[ViscosityHigherOrderBlock] = None
-
-
-ViscosityDefinition = Annotated[
-    Union[SlotComposedViscosityDefinition],
-    Field(discriminator="model"),
-]

@@ -8,10 +8,6 @@ def pick(condition: jaxBool, when_true, when_false) -> jnp.ndarray:
 
 
 def relative_scale(x: jaxFloat) -> jnp.ndarray:
-    """
-    `width / x` stops meaning anything as x approaches zero, so below unity the
-    comparison falls back to absolute.
-    """
     return jnp.maximum(jnp.abs(jnp.asarray(x)), 1.0)
 
 

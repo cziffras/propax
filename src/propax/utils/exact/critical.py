@@ -183,8 +183,6 @@ def saturated_pair(
         J[1, 0], J[1, 1] = reduced.gibbs_d(dL, t) * dL, -reduced.gibbs_d(dV, t) * dV
         step = mp.lu_solve(J, -F)
         yL, yV = yL + step[0], yV + step[1]
-        # A step that leaves the reals means the iterate has wandered where the
-        # fractional tau exponents are no longer defined
         if mp.im(yL) != 0 or mp.im(yV) != 0:
             raise RuntimeError(
                 f"the saturated pair left the reals at theta = {mp.nstr(th, 6)}; the "

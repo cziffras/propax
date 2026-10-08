@@ -1,13 +1,3 @@
-"""
-Exact conversion of a CoolProp Helmholtz EOS into the propax schema.
-
-Each CoolProp block type has a handler in IDEAL_BLOCK_HANDLERS /
-RESIDUAL_BLOCK_HANDLERS; supporting a new CoolProp term type means adding one
-handler here (and, if the propax schema cannot express it, a schema family
-first). Unsupported block types are rejected with an explicit message so a
-fluid can never be silently mis-converted.
-"""
-
 import math
 
 from ...core.config import ThermoVar
@@ -92,13 +82,6 @@ def _planck_einstein(blk, acc):
 
 
 def _ideal_power(blk, acc):
-    """sum n tau^t.
-
-    This is delta-independent, and alpha0 / alphar enter every property
-    identically except through their delta-derivatives  which vanish for a
-    d = 0 term. So these are emitted verbatim as residual polynomial terms with
-    d = 0 (checked numerically), and no ideal-side power term is needed.
-    """
     acc["_tau_pow"] += list(zip(blk["n"], blk["t"]))
 
 
@@ -150,11 +133,6 @@ def _gaussian(blk, acc):
 
 
 def _exponential(blk, acc):
-    """sum n delta^d tau^t exp(-g delta^l)  (CoolProp ResidualHelmholtzExponential).
-
-    g = 0 makes the exponential vanish, so those terms are plain polynomials
-    and are routed as such
-    """
     for n, t, d, g, p in zip(blk["n"], blk["t"], blk["d"], blk["g"], blk["l"]):
         if g == 0:
             acc["poly_n"].append(n)

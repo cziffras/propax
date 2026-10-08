@@ -1,10 +1,3 @@
-"""
-Exact conversion of a CoolProp conductivity correlation into a propax block.
-
-Same rule as `viscosity.py`: transcription of published coefficients, verified
-against CoolProp, or nothing at all.
-"""
-
 from ...fluids._registry import _make_factories
 from ...fluids.schema import FluidDefinition
 from .source import require_coolprop
@@ -25,14 +18,6 @@ SLOT_COND_CRITICAL = {"simplified_Olchowy_Sengers"}
 def convert_slot_conductivity(
     cp_cond: dict, *, T_c: float, rho_c: float, p_c_MPa: float
 ) -> dict:
-    """CoolProp TRANSPORT.conductivity -> a "slot_composed" definition block.
-
-    Raises ValueError on any slot form without a runtime class, so a fluid can
-    never be silently mis-converted. `T_c`, `rho_c` and `p_c` come from the EOS
-    reducing state: CoolProp keeps them implicit in the transport block (the
-    ratio_of_polynomials / polynomial forms carry their own T_reducing /
-    rho_reducing instead, which are copied from there).
-    """
     d = cp_cond.get("dilute")
     if not isinstance(d, dict) or d.get("type") not in SLOT_COND_DILUTE:
         raise ValueError(
@@ -95,7 +80,6 @@ def convert_slot_conductivity(
             "T_c": T_c,
             "rho_c": rho_c,
             "p_c": p_c_MPa,
-            # each field falls back to CoolProp's own default when omitted
             "T_ref": c.get("T_ref", 1.5 * T_c),  # standard O-S reference
             "qD": c.get("qD", d["qD"]),
             "zeta0": c.get("zeta0", d["zeta0"]),

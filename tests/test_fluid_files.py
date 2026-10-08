@@ -50,15 +50,13 @@ class TestGenericModules:
     def test_modules_evaluate(self, fluid):
         eos_f, anc_f, visc_f, cond_f = EQS_REGISTRY[fluid]
         eos = eos_f()
-        visc = visc_f(eos=eos)  # None when the fluid ships EOS-only
+        visc = visc_f(eos=eos)
         cond = cond_f(eos=eos, viscosity=visc)
 
-        # fluid-appropriate single-phase gas state: low density, supercritical T
         rho, T = jnp.asarray(2.0), jnp.asarray(1.2 * eos.T_crit)
         props = eos.props_rhoT(rho, T)
         assert float(props["P"]) > 0.0
         assert float(props["cp"]) > float(props["cv"]) > 0.0
-        # transport is optional (many CoolProp fluids publish none)
         if visc is not None:
             assert 0.0 < float(visc.viscosity_rhoT(rho, T)) < 1e-3
         if cond is not None:

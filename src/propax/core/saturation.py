@@ -62,11 +62,6 @@ class Superancillary(eqx.Module):
     def from_block(
         cls, eos: HelmholtzEOS, block, dtype=jnp.float64
     ) -> "Superancillary":
-        """Assemble from the stored coefficients, a `SaturationSuperancillary`.
-
-        T_crit comes from the EOS, which is where it is solved: the block is
-        fitted against that same value and does not carry a second copy.
-        """
         return cls(
             eos=eos,
             rho_sat=_pieces(block.densities, dtype),
@@ -130,7 +125,6 @@ class Superancillary(eqx.Module):
                 }
             )
 
-        # The vapour side carries the pressure
         return SaturationResult(
             L=branch(rho_L, pL),
             V=branch(rho_V, pV),
@@ -160,7 +154,6 @@ class Superancillary(eqx.Module):
     def create(
         cls, eos: HelmholtzEOS, fluid_name: str, dtype=jnp.float64
     ) -> "Superancillary":
-        """Read the coefficients stored in this fluid's definition file."""
         block = EQS_REGISTRY[fluid_name][1]()
         if block is None:
             raise ValueError(

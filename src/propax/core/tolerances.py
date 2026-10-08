@@ -60,7 +60,6 @@ class PrecisionScaled:
 
 @dataclass(frozen=True)
 class Accuracies(PrecisionScaled):
-    #  bracketed solves
     outer_rtol: float = 1e-13
     """Temperature along an isobar, enclosing the density solve at each step."""
 
@@ -71,7 +70,6 @@ class Accuracies(PrecisionScaled):
     """Acceptance, not convergence: how small a scaled residual counts as a
     root. It rejects an answer rather than stopping a loop."""
 
-    #  the saturation line
     channel_edge: float = 1e-12
     """How far past its ends a fitted channel still answers, as a relative tolerance."""
 

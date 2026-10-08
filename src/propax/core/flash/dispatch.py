@@ -2,7 +2,6 @@ from typing import Dict, FrozenSet, Optional
 
 from ..config import ThermoVar
 
-# The EOS' own variables
 NATURAL = frozenset({ThermoVar.D, ThermoVar.T})
 
 
@@ -44,7 +43,6 @@ def one_dim_known_var(tvar1: ThermoVar, tvar2: ThermoVar) -> Optional[ThermoVar]
         if known not in pair:
             continue
         other = tvar2 if tvar1 == known else tvar1
-        # (D, T) pins both and is degenerate
         if other in targets:
             return known
     return None
@@ -56,12 +54,6 @@ def both_natural_pair(tvar1: ThermoVar, tvar2: ThermoVar) -> bool:
 
 
 def is_degenerate_pair(tvar1: ThermoVar, tvar2: ThermoVar) -> bool:
-    """Is the pair (P, T), which cannot describe a two-phase state?
-
-    Under the dome P and T are not independent  P = P_sat(T)  so a (P, T)
-    input either names a single-phase state or is inconsistent. The two-phase
-    graph is then never built.
-    """
     return frozenset({tvar1, tvar2}) == frozenset({ThermoVar.P, ThermoVar.T})
 
 
@@ -103,7 +95,6 @@ INVALID_PAIRS = {
 
 
 def check_supported(tvar1: ThermoVar, tvar2: ThermoVar) -> None:
-    """Raise on a pair propax cannot answer, saying why (see above)."""
     reason = INVALID_PAIRS.get(frozenset({tvar1, tvar2}))
     if reason is not None:
         raise ValueError(
@@ -134,21 +125,14 @@ SATURATED = frozenset(
 
 
 def is_saturated_pair(tvar1: ThermoVar, tvar2: ThermoVar) -> bool:
-    """Is this a quality read against the pressure or the temperature?"""
     return frozenset({tvar1, tvar2}) in SATURATED
 
 
 def is_nested_pair(tvar1: ThermoVar, tvar2: ThermoVar) -> bool:
-    """Does this pair take the two-stage bracket?"""
     return frozenset({tvar1, tvar2}) in NESTED
 
 
 def route_of(tvar1: ThermoVar, tvar2: ThermoVar) -> Optional[str]:
-    """How `flash` answers this pair, or None if it declines it.
-
-    Read off the same tables the dispatch branches on, so the two cannot
-    disagree about what is supported.
-    """
     if frozenset({tvar1, tvar2}) in INVALID_PAIRS:
         return None
     if is_saturated_pair(tvar1, tvar2):
@@ -165,7 +149,6 @@ def route_of(tvar1: ThermoVar, tvar2: ThermoVar) -> Optional[str]:
 
 
 def supported_pairs() -> Dict[FrozenSet[ThermoVar], str]:
-    """Every pair the flash accepts, mapped to the route that answers it."""
     inputs = [v for v in ThermoVar if v.spec.can_be_input]
     found = {}
     for i, first in enumerate(inputs):

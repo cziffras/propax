@@ -43,7 +43,6 @@ def test_the_saturated_branches_carry_the_expected_keys(saturation, dome):
 
 
 def test_out_of_domain_is_nan(props, eos, grid):
-    """A refusal is a NaN, never a plausible number."""
     T = float(grid.T[len(grid) // 2])
     for rho, t in ((-10.0, T), (0.0, T), (10.0, -5.0)):
         state = props.props_rhoT(jnp.asarray(rho), jnp.asarray(t))

@@ -1,8 +1,3 @@
-"""
-Multiparameter Helmholtz EOS schema: the ideal and residual Helmholtz parts, the
-saturation superancillary, and the fluid constants.
-"""
-
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
@@ -51,8 +46,6 @@ class ResidualHelmholtz(BaseModel):
     exp_d: List[float] = Field(default_factory=list)
     exp_p: List[float] = Field(default_factory=list)
 
-    # generalized exponential: like exp_* but with an explicit coefficient g in
-    # the exponential (CoolProp ResidualHelmholtzExponential, where g != 1)
     gexp_n: List[float] = Field(default_factory=list)
     gexp_t: List[float] = Field(default_factory=list)
     gexp_d: List[float] = Field(default_factory=list)
@@ -98,16 +91,9 @@ class ResidualHelmholtz(BaseModel):
 
 
 class ChebyshevLayout(BaseModel):
-    """One piecewise Chebyshev channel as stored."""
-
     edges: List[float]
-    """Piece boundaries in the channel's abscissa, (n_pieces + 1,) ascending."""
-
     coeffs: List[List[List[float]]]
-    """(n_pieces, degree + 1, n_components), the Chebyshev coefficients."""
-
     log_components: List[int] = Field(default_factory=list)
-    """Components fitted on their logarithm, exponentiated on the way out."""
 
     @property
     def n_components(self) -> int:
@@ -129,22 +115,12 @@ class ChebyshevLayout(BaseModel):
 
 
 class SaturationSuperancillary(BaseModel):
-    """The saturation curve, anchored on T.
-
-    T -> (rho_L, rho_V) in s = sqrt(1 - T/T_crit), where the densities leave the
-    critical point like sqrt(theta); T <-> P_sat in theta = 1 - T/T_crit, where
-    ln P_sat keeps a finite slope up to the critical point.
-    """
-
-    T_min: float  # K, the cold end the fit covers
+    T_min: float
 
     rho_max_mol: float
 
     densities: ChebyshevLayout
-    """T -> (rho_L, rho_V), in s."""
-
     pressure: ChebyshevLayout
-    """T <-> ln P_sat, in theta."""
 
     @model_validator(mode="after")
     def _check_channels(self):
@@ -162,17 +138,13 @@ class HelmholtzEOSDefinition(BaseModel):
     T_red: float
     P_red: float
     rho_red_mol: float
-    # The correlation's own critical point, where dP/drho and d2P/drho2 zero out,
-    # solved by `utils.exact.critical` with mpmath
     T_crit: float
     P_crit: float
     rho_crit_mol: float
     T_triple: float
     P_triple: float
-    # Upper ends of the EOS's stated validity range (CoolProp EOS.T_max, p_max)
     T_max: Optional[float] = None  # K
     P_max: float  # Pa
-    # The density at (T_triple, P_max) solved during make
     ideal: IdealHelmholtz
     residual: ResidualHelmholtz
     superancillary: Optional[SaturationSuperancillary] = None

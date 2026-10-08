@@ -29,9 +29,6 @@ KB = 1.380649e-23  # J/K
 
 
 class DiluteConductivityTerm(eqx.Module):
-    # Whether lambda0 rides on the dilute viscosity eta0(T); when False the
-    # conductivity loop skips fetching it (so the form works with any viscosity
-    # model, or none of the eta0-exposing kind).
     needs_eta0 = False
 
     def lambda0(self, T: jaxFloat, eta0_uPas: jaxFloat) -> jaxFloat:
@@ -44,13 +41,6 @@ class ResidualConductivityTerm(eqx.Module):
 
 
 class Eta0AndPolyDilute(DiluteConductivityTerm):
-    """CoolProp `dilute:eta0_and_poly` (Lemmon-Jacobsen) equation and CoolProp
-    source in docs/transport.md, "Conductivity - dilute"
-
-    The leading term rides on the dilute viscosity (needs_eta0 = True), so this
-    family cannot be evaluated without a viscosity model
-    """
-
     needs_eta0 = True
 
     T_c: float
@@ -64,12 +54,6 @@ class Eta0AndPolyDilute(DiluteConductivityTerm):
 
 
 class RatioOfPolynomialsDilute(DiluteConductivityTerm):
-    """CoolProp `dilute:ratio_of_polynomials` (Assael) equation and CoolProp
-    source in docs/transport.md, "Conductivity - dilute"
-
-    A pure temperature ratio, so it needs no viscosity model (needs_eta0 = False)
-    """
-
     needs_eta0 = False
 
     T_reducing: float
@@ -86,10 +70,6 @@ class RatioOfPolynomialsDilute(DiluteConductivityTerm):
 
 
 class PolynomialExponentialResidual(ResidualConductivityTerm):
-    """CoolProp `residual:polynomial_and_exponential` equation and CoolProp
-    source in docs/transport.md, "Conductivity - residual"
-    """
-
     T_c: float
     rho_c: float  # kg/m3
     A: np.ndarray
@@ -110,13 +90,6 @@ class PolynomialExponentialResidual(ResidualConductivityTerm):
 
 
 class PolynomialResidual(ResidualConductivityTerm):
-    """CoolProp `residual:polynomial` equation and CoolProp source in
-    docs/transport.md, "Conductivity - residual"
-
-    Exponential-free, reduced by the transport correlation's own T/rho,
-    with the reciprocal tau = T_reducing / T (verified against CoolProp)
-    """
-
     T_reducing: float
     rho_reducing: float  # kg/m3
     B: np.ndarray
@@ -130,13 +103,6 @@ class PolynomialResidual(ResidualConductivityTerm):
 
 
 class SimplifiedOlchowySengers(eqx.Module):
-    """CoolProp `critical:simplified_Olchowy_Sengers` equation and CoolProp source
-    in docs/transport.md, "Conductivity - critical enhancement"
-
-    Needs cp, cv and (dP/drho)_T from the EOS plus the viscosity, hence the injected
-    modules; T_ref is per-fluid
-    """
-
     T_c: float
     rho_c: float  # kg/m3
     p_c: float  # MPa

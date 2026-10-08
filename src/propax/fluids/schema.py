@@ -28,7 +28,6 @@ from typing import Optional
 from pydantic import BaseModel
 
 from .generic.conductivity.schema_cond import (
-    ConductivityDefinition,
     ConductivityDiluteBlock,
     ConductivityResidualBlock,
     Eta0AndPolyDiluteBlock,
@@ -52,7 +51,6 @@ from .generic.viscosity.schema_visc import (
     PowersOfTrDiluteBlock,
     RainwaterFriendInitialDensityBlock,
     SlotComposedViscosityDefinition,
-    ViscosityDefinition,
     ViscosityDiluteBlock,
     ViscosityHigherOrderBlock,
 )
@@ -69,8 +67,8 @@ class FluidDefinition(BaseModel):
     cas: Optional[str] = None
     eos: EOSDefinition
     # Transport is optional (CoolProp ships no correlations in most cases)
-    viscosity: Optional[ViscosityDefinition] = None
-    conductivity: Optional[ConductivityDefinition] = None
+    viscosity: Optional[SlotComposedViscosityDefinition] = None
+    conductivity: Optional[SlotComposedConductivityDefinition] = None
 
 
 def load_fluid_file(path: Path | str) -> FluidDefinition:
@@ -105,24 +103,19 @@ __all__ = [
     # schema_visc
     "CollisionIntegralDiluteBlock",
     "CustomTransportTermBlock",
-    "DiluteRainwaterFriendViscosityDefinition",
     "ModifiedBatschinskiHildebrandBlock",
     "PowersOfTDiluteBlock",
     "PowersOfTrDiluteBlock",
     "RainwaterFriendInitialDensityBlock",
     "SlotComposedViscosityDefinition",
-    "ViscosityDefinition",
     "ViscosityDiluteBlock",
     "ViscosityHigherOrderBlock",
     # schema_cond
-    "ConductivityDefinition",
     "ConductivityDiluteBlock",
     "ConductivityResidualBlock",
     "Eta0AndPolyDiluteBlock",
-    "OlchowySengersCriticalEnhancement",
     "PolynomialExponentialResidualBlock",
     "PolynomialResidualBlock",
-    "RationalPolynomialConductivityDefinition",
     "RatioOfPolynomialsDiluteBlock",
     "SimplifiedOlchowySengersBlock",
     "SlotComposedConductivityDefinition",

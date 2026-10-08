@@ -33,7 +33,6 @@ def create_all_tables(
     """
     if tables_base_path is None:
         tables_base_path = get_table_path()
-    # every request is checked before the first, long, build starts
     specs = [table_spec(pair, bounds) for pair in pairs]
 
     failures: list = []
@@ -110,7 +109,7 @@ def clear_cache(base: Path, assume_yes: bool) -> int:
 def _confirmed(question: str) -> bool:
     try:
         return input(question).strip().lower() == "y"
-    except EOFError:  # not answered is a no
+    except EOFError:
         return False
 
 
@@ -221,7 +220,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _bounds(args, parser: argparse.ArgumentParser) -> dict:
-    """{variable: (lo, hi)} from the VAR=LO:HI items of --bounds."""
     bounds = {}
     for item in args.bounds:
         try:

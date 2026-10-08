@@ -27,7 +27,6 @@ _GHOST_QUALITY = 0.05
 
 
 def _stored_value(saturation, var: ThermoVar, T, quality):
-    """One output of the mixture, in the form the lever rule is linear in."""
     if var == ThermoVar.Q:
         return quality
     return as_mixed(var, mixture_state(saturation, T, quality)[var])
@@ -102,8 +101,6 @@ def _dome_window(cfg: TableSpec, saturation):
     axes = (cfg.x_axis, cfg.y_axis)  # the two inputs
 
     def segment(axis):
-        """(lower, upper) of the liquid and vapour values, at each point."""
-
         def saturated(t, quality):
             return mixture_state(saturation, t, jnp.asarray(quality))[axis.variable]
 
@@ -233,7 +230,6 @@ def _probe_errors(table, cfg: TableSpec, node, ax1, ax2, along_x1: bool):
     U1, U2 = np.meshgrid(ax1, ax2, indexing="ij")
     # first compute ground truth
     truth, ok = _mapped(node, U1.ravel(), U2.ravel())
-    # the table is looked up in physical units
     X1 = np.exp(U1) if table.log_x else U1
     X2 = np.exp(U2) if table.log_y else U2
     lookup = _mapped(lambda a, b: table(a, b), X1.ravel(), X2.ravel())
@@ -259,10 +255,6 @@ def _split(ax, where):
 
 
 def _refine(path, cfg, node, outputs, ax1, ax2, target, quantile, max_nodes):
-    """Build, measure at the edge midpoints (a bicubic is exact on the nodes),
-    and split the intervals where more than `quantile` of the probes miss,
-    until none does or the node budget is spent: every round splits at least
-    one interval, so the budget bounds the rounds."""
     name = path.parent.name
     for rnd in itertools.count():
         _build_table(path, cfg, node, outputs, ax1, ax2)

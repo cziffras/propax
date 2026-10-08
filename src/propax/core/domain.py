@@ -8,7 +8,6 @@ from .tolerances import TOL
 
 
 def rho_bounds(saturation) -> Tuple[float, float]:
-    """Every density the correlation describes."""
     return (
         TOL.domain.rho_lo_frac * saturation.eos.rho_crit_mass,
         saturation.rho_max,
@@ -33,6 +32,4 @@ def is_two_phase(quality, sat_is_valid, slack: float = 0.0):
 
 
 def clamp_quality(quality, slack: float = 0.0):
-    """The slack lets a quality out of [0, 1]; the lever rule may not see more
-    than the caller asked for."""
     return jnp.clip(quality, -slack, 1.0 + slack)

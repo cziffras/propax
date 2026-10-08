@@ -12,13 +12,6 @@ from .config import ThermoVar
 
 
 class PropertyMap(Mapping):
-    """A property map that cannot be mutated in place.
-
-    Built from `ThermoVar` keys, read back by either those or the internal
-    name they carry. `replace` returns a new map, so a value
-    reaching a traced call is never rebound behind it.
-    """
-
     __slots__ = ("_entries",)
 
     def __init__(self, entries=()):
@@ -89,9 +82,6 @@ def _to_array(v):
 
 
 class SaturationResult(eqx.Module):
-    """A point of the saturation line: T and P, and D, U, H, S on both
-    branches, with no quality to place the state between them."""
-
     L: PropertyMap
     V: PropertyMap
     T: Array = eqx.field(converter=_to_array)

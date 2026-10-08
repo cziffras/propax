@@ -26,7 +26,6 @@ def _saturation_at(eos: HelmholtzEOS, saturation: Superancillary, anchor, value)
 
 
 def _split(anchor: ThermoVar, tvar1, val1, tvar2, val2):
-    """(the anchor's value, the other variable, its value)."""
     return (val1, tvar2, val2) if tvar1 == anchor else (val2, tvar1, val1)
 
 
@@ -38,12 +37,6 @@ def solve_saturated(
     tvar2: ThermoVar,
     val2: Array,
 ) -> Tuple[jaxBool, Array, Array]:
-    """The state read from a quality and either the pressure or the temperature.
-
-    Returns (is_valid, T_sat, quality). The quality is clipped into [0, 1]
-    because the lever rule may not see anything else, but a quality outside it
-    was never a mixture and the flag says so.
-    """
     anchor = ThermoVar.T if ThermoVar.T in (tvar1, tvar2) else ThermoVar.P
     known, _, x = _split(anchor, tvar1, val1, tvar2, val2)
     sat, in_range = _saturation_at(eos, saturation, anchor, known)
@@ -91,20 +84,16 @@ def solve_two_phase(
     """
     vars_set = {tvar1, tvar2}
 
-    # (P, T) pins the saturation state itself: no mixture can be named by it
     if vars_set == {ThermoVar.P, ThermoVar.T}:
         T_guess = jnp.asarray((eos.T_triple + eos.T_crit) / 2.0)
         return jnp.array(False), T_guess, jnp.array(0.5)
 
-    # P or T given: T_sat comes off the curve, the other variable places x on it
     anchor = next((v for v in (ThermoVar.P, ThermoVar.T) if v in vars_set), None)
     if anchor is not None:
         known, other_tvar, other_val = _split(anchor, tvar1, val1, tvar2, val2)
         sat, in_range = _saturation_at(eos, saturation, anchor, known)
         L, V = get_sat_bounds(sat, other_tvar)
         x = (as_mixed(other_tvar, other_val) - L) / (V - L)
-        # a saturation state the module flags as invalid must not silently
-        # become a converged two-phase answer
         is_valid_flag = in_range & is_two_phase(
             x, sat.is_valid, slack=max(slack, TOL.acc.quality_slack)
         )
@@ -139,19 +128,11 @@ def solve_two_phase(
         # so only this lane fails to converge.
         return pick(jnp.isfinite(res), res, 1e6)
 
-    # Neither P nor T pins T_sat, so this Newton is the only thing standing
-    # between the caller and a wrong phase, and it needs a high quality seed:
-    # the residual is walked along the curve, uniformly in s = sqrt(1 - T/T_crit)
-    # since the dome closes like sqrt(theta), and a uniform scan in T would spend
-    # its last cell on the whole critical region and step over the crossing there
     T_dummy = (saturation.T_min + saturation.T_crit) / 2.0
     T_guess, crossed = _provide_guess_and_flag_for_third_case(
         residual, saturation, other, T_dummy, linear_norm, other_norm, s_linear
     )
 
-    # Inactive lanes, non-finite inputs (1/0 from `as_mixed`) and lanes the scan
-    # found no crossing for are handed a trivial root at T_dummy: the Newton stops
-    # at once and the flag below turns them down
     sat_dummy = saturation.state_T(T_dummy)
     L_lin_dummy, V_lin_dummy = get_sat_bounds(sat_dummy, linear)
     L_oth_dummy, V_oth_dummy = get_sat_bounds(sat_dummy, other)

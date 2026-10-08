@@ -21,15 +21,11 @@ code simplicity without costing much in terms of speed."""
 
 @dataclass(frozen=True)
 class SaturationFit:
-    """The fitted saturation channels, both anchored on T."""
-
     T_crit: float
     T_min: float
     rho_max_mol: float
     pair: ChebyshevChannel
-    """T -> (rho_L, ln rho_V), in s = sqrt(1 - T/T_crit)."""
     pressure: ChebyshevChannel
-    """T <-> ln P_sat, in theta = 1 - T/T_crit."""
 
     def __repr__(self) -> str:
         stored = sum(

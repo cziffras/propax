@@ -46,7 +46,6 @@ def saturation_walk(
     eos,
     crit: Optional[CriticalPoint] = None,
 ) -> SaturationCurve:
-    """The whole curve, from the critical point down to the triple point."""
     crit = solve_critical_point(eos)
     T_c = float(crit.T_crit)
     theta_max = 1.0 - float(eos.T_triple) / T_c
@@ -73,12 +72,6 @@ def make_node_solver(
     crit: CriticalPoint,
     walk: SaturationCurve,
 ):
-    """T -> (rho_L, rho_V, P_sat), each node solved once in extended precision.
-
-    Every equilibrium solve is seeded from the walk, interpolated in s where
-    delta_L and ln delta_V are nearly linear. Closer to the critical point than
-    the walk's first point, the critical expansion seeds it instead.
-    """
     T_crit = float(crit.T_crit)
     rho_red_mass = float(eos.rho_red_mol) * float(eos.molar_mass)
     rho_crit_mass = float(crit.delta_c) * rho_red_mass
@@ -112,7 +105,6 @@ def make_node_solver(
             reduced_by_dps[dps] = ReducedEOS(eos, dps)
         r = reduced_by_dps[dps]
         mp.mp.dps = dps
-        # read on the vapour side, as the walk does
         P_sat = r.rho_red_mol * r.R_u * (r.T_red / tau) * r.psi(delta_V, tau)
 
         return (

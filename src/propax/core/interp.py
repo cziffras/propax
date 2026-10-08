@@ -30,15 +30,6 @@ def hermite_weights(t):
 
 
 def _is_uniform(arr: np.ndarray) -> bool:
-    """Whether an axis is evenly spaced, to within its own rounding.
-
-    Decides between a division and a binary search in `BicubicInterpolation.__call__`,
-    so it has to be exact about what the localization can actually assume: the
-    fast path computes `floor((x - x0) / h)`, whose worst-case index drift over
-    the whole axis is what the tolerance is scaled against. A grid built as a
-    linspace is uniform to a few ulps and passes; a graded one fails by orders
-    of magnitude, so nothing sits near the threshold in practice.
-    """
     if arr.shape[0] < 3:
         return True
     d = np.diff(np.asarray(arr, dtype=np.float64))
@@ -97,8 +88,6 @@ class ChebyshevPieces(eqx.Module):
     coeffs: _Const = eqx.field(static=True)  # (n_pieces, degree + 1)
 
     log_components: Tuple[int, ...] = eqx.field(static=True, default=())
-    """Components stored as log(value), and exponentiated on the way out.
-    """
 
     @classmethod
     def from_arrays(
@@ -125,7 +114,6 @@ class ChebyshevPieces(eqx.Module):
         )
 
     def __call__(self, x: jaxFloat) -> jax.Array:
-        """The channel at x. Returns (C,)."""
         out = self._stored(x)
         if self.log_components:
             idx = jnp.asarray(self.log_components)
@@ -133,7 +121,6 @@ class ChebyshevPieces(eqx.Module):
         return out
 
     def _stored(self, x: jaxFloat) -> jax.Array:
-        """Clenshaw iteration on the piece holding x, log components left as logs. Returns (C,)."""
         edges, coeffs = self.edges.array, self.coeffs.array
         x = jnp.asarray(x)
         i = jnp.clip(
@@ -151,16 +138,10 @@ class ChebyshevPieces(eqx.Module):
         return coeffs[i, 0] + t * b1 - b2
 
     def invert(self, value: jaxFloat, component: int | jax.Array = 0) -> jax.Array:
-        """
-        Every stored component (rho_L, rho_V, ln P_sat) is monotone in T, so the
-        whole channel is one bracket. `component` may be traced; a log component
-        is inverted on its logarithm, where it is stored.
-        """
         return _abscissa_of(self, component, jnp.asarray(value))
 
 
 def _as_stored(channel: ChebyshevPieces, component, value):
-    """`value` as the component is stored: its logarithm for a log component."""
     is_log = jnp.isin(component, jnp.asarray(channel.log_components, dtype=int))
     return pick(is_log, jnp.log(pick(is_log, value, 1.0)), value)
 
@@ -218,12 +199,6 @@ def _abscissa_of_jvp(channel: ChebyshevPieces, primals, tangents):
 
 
 class BicubicInterpolation(eqx.Module):
-    """A cell-wise bicubic over a rectangular grid, with C channels.
-
-    Each node carries the value and the three derivatives a bicubic needs,
-    and a lookup weighs the four corners of the cell holding the point.
-    """
-
     grid_x: _Const = eqx.field(static=True)
     grid_y: _Const = eqx.field(static=True)
 
@@ -243,7 +218,6 @@ class BicubicInterpolation(eqx.Module):
 
     output_names: Tuple[str, ...] = eqx.field(static=True)
 
-    # nodes the build did not solve, filled by a Taylor step from a solved one
     extrapolated: _Const = eqx.field(static=True)
 
     even_x: bool = eqx.field(static=True, default=True)
@@ -297,7 +271,6 @@ class BicubicInterpolation(eqx.Module):
         )
 
     def _locate(self, x, axis, even, step):
-        """The index of the cell holding `x`, and that cell's width."""
         if even:
             k = jnp.floor((x - axis[0]) / step).astype(jnp.int32)
             k = jnp.clip(k, 0, axis.shape[0] - 2)
@@ -306,8 +279,6 @@ class BicubicInterpolation(eqx.Module):
         return k, axis[k + 1] - axis[k]
 
     def _cell(self, x_val: jaxFloat, y_val: jaxFloat):
-        """(x, y) in internal units clipped to the axes, the cell holding them,
-        and whether they were outside."""
         # materialize the static numpy tables as trace-time constants; raw numpy
         # cannot be indexed by a traced index (it would call __array__ on it)
         axis_x, axis_y = self.grid_x.array, self.grid_y.array
@@ -331,12 +302,10 @@ class BicubicInterpolation(eqx.Module):
         return x, y, i, j, width_x, width_y, corners, outside
 
     def is_extrapolated(self, x_val: jaxFloat, y_val: jaxFloat) -> jax.Array:
-        """Whether the lookup rests on a node the build did not solve."""
         *_, corners, _ = self._cell(x_val, y_val)
         return jnp.any(self.extrapolated.array[corners])
 
     def __call__(self, x_val: jaxFloat, y_val: jaxFloat) -> jax.Array:
-        """Channels at (x, y), NaN outside the axes."""
         x, y, i, j, width_x, width_y, corners, outside = self._cell(x_val, y_val)
         axis_x, axis_y = self.grid_x.array, self.grid_y.array
 

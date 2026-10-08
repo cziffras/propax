@@ -35,11 +35,6 @@ def get_chunk_size() -> Optional[int]:
 
 @dataclass(frozen=True, slots=True)
 class VarSpec:
-    """What the flash needs to know about one property.
-
-    The CoolProp key is the enum member's own value, so it is not repeated here.
-    """
-
     internal_key: str
     can_be_input: bool = True
     linear_in_x: bool = False
@@ -115,9 +110,6 @@ _SPECS: Mapping[ThermoVar, VarSpec] = MappingProxyType(
             scale=10.0,
             unit="kg/m3",
         ),
-        # An input, but only beside P or T `dispatch.SATURATED` says where.
-        # Any other partner would need a solve, and a quality is not a state
-        # variable of the EOS, so there is no bracket to lay one on.
         ThermoVar.Q: VarSpec("x"),
         ThermoVar.CVMASS: VarSpec("cv", can_be_input=False, unit="J/(K.kg)"),
         ThermoVar.CPMASS: VarSpec("cp", can_be_input=False, unit="J/(K.kg)"),
@@ -148,14 +140,6 @@ class Axis(BaseModel):
 
 
 class TableSpec(BaseModel):
-    """`outputs` is whichever of the natural variables (D, T) the axes do not
-    already give; a dome table appends the quality, since below the saturation
-    line (D, T) does not name the state on its own. Every other property is
-    recovered from the EOS at that (rho, T) when it is asked for, never stored:
-    a stored value is one more thing to keep consistent, and interpolating it
-    is strictly worse than evaluating the EOS the table just located.
-    """
-
     x_axis: Axis
     y_axis: Axis
     outputs: List[ThermoVar] = Field(default_factory=list)
@@ -204,9 +188,6 @@ TABLE_REGISTRY: List[TableSpec] = [
 
 
 def table_spec(pair, bounds) -> TableSpec:
-    """The registry's table for `pair`, on the ranges given by `bounds`,
-    {variable: (lo, hi)}. A table has no default range: which states it covers
-    is the user's choice."""
     wanted = {ThermoVar(v) for v in pair}
     bounds = {ThermoVar(v): ends for v, ends in bounds.items()}
     spec = next(

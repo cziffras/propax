@@ -22,24 +22,28 @@ from .generic import (
     HelmholtzEOS,
     ViscositySlots,
 )
+from .generic.conductivity.schema_cond import (
+    SlotComposedConductivityDefinition,
+)
+from .generic.viscosity.schema_visc import (
+    SlotComposedViscosityDefinition,
+)
 from .schema import DATA_DIR, FluidDefinition, discover_fluid_files, load_fluid_file
-
-# one eqx.Module class per supported correlation family (see schema.py)
-_VISCOSITY_MODELS = {
-    "slot_composed": ViscositySlots,
-}
-_CONDUCTIVITY_MODELS = {
-    "slot_composed": ConductivitySlots,
-}
 
 
 def _make_factories(
     defn: FluidDefinition,
 ) -> Tuple[Callable, Callable, Callable, Callable]:
     # transport blocks are optional (for now); the factories then yield None
-    visc_cls = _VISCOSITY_MODELS[defn.viscosity.model] if defn.viscosity else None
+    visc_cls = (
+        ViscositySlots
+        if isinstance(defn.viscosity, SlotComposedViscosityDefinition)
+        else None
+    )
     cond_cls = (
-        _CONDUCTIVITY_MODELS[defn.conductivity.model] if defn.conductivity else None
+        ConductivitySlots
+        if isinstance(defn.conductivity, SlotComposedConductivityDefinition)
+        else None
     )
 
     def eos_factory():
@@ -51,15 +55,9 @@ def _make_factories(
     def viscosity_factory(*, eos=None):
         if visc_cls is None or defn.viscosity is None:
             return None
-        # slot_composed can carry a custom (user-supplied) higher-order term that
-        # needs the EOS : provided by the user /!\
-        if defn.viscosity.model == "slot_composed":
-            return visc_cls.from_definition(defn.viscosity, eos=eos)
-        return visc_cls.from_definition(defn.viscosity)
+        return visc_cls.from_definition(defn.viscosity, eos=eos)
 
     def conductivity_factory(*, eos, viscosity):
-        # the critical enhancement needs the viscosity, so no viscosity means
-        # no conductivity either
         if cond_cls is None or viscosity is None:
             return None
         return cond_cls.from_definition(defn.conductivity, eos=eos, viscosity=viscosity)

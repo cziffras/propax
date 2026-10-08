@@ -57,11 +57,6 @@ class ChebyshevExpansion:
         return (2.0 * x - (self.xmax + self.xmin)) / (self.xmax - self.xmin)
 
     def __call__(self, x):
-        """Clenshaw's recurrence that evaluates T_k without ever forming it.
-
-        `x` of shape S and `coeffs` of shape (degree + 1, C) give S + (C,); a
-        one-dimensional `coeffs` gives S, so the scalar case is unchanged.
-        """
         t = self._to_unit(np.asarray(x, dtype=float))
         c = self.coeffs
         if c.ndim > 1:  # make room for the component axis
@@ -88,7 +83,6 @@ class ChebyshevExpansion:
 def fit_expansion(
     f: Callable[[np.ndarray], np.ndarray], xmin: float, xmax: float, degree: int
 ) -> ChebyshevExpansion:
-    """One expansion of `f` on [xmin, xmax], f evaluated at the Lobatto points."""
     x = cheb_lobatto_nodes(degree, xmin, xmax)
     y = np.asarray(f(x), dtype=float)
     if not np.all(np.isfinite(y)):
@@ -103,10 +97,6 @@ def dyadic_split(
     degree: int,
     max_passes: int = _MAX_PASSES,
 ) -> List[ChebyshevExpansion]:
-    """Cover [xmin, xmax] with expansions that each pass the tail test.
-
-    Fit the whole interval; wherever the certificate fails, halve and refit.
-    """
     pieces = [fit_expansion(f, xmin, xmax, degree)]
     for _ in range(max_passes):
         converged = True

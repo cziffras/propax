@@ -1,13 +1,3 @@
-"""
-Exact conversion of a CoolProp viscosity correlation into a propax block.
-
-Transcription only: the published coefficients are copied slot by slot and the
-result is checked against CoolProp, so a converted fluid matches the oracle to
-machine precision. When the published form is one propax has no class for the
-fluid ships without viscosity  `make_utils.coverage` says which form blocks
-which fluid, and implementing that form is the way to widen coverage.
-"""
-
 from ...fluids.generic.viscosity import ViscositySlots
 from ...fluids.schema import SlotComposedViscosityDefinition
 from .source import require_coolprop
@@ -46,8 +36,6 @@ def convert_slot_viscosity(cp_visc: dict, *, molar_mass: float) -> dict:
             f"(supported: {sorted(SLOT_DILUTE)})"
         )
 
-    # Lennard-Jones params live at the block level; only the collision_integral
-    # dilute term and the Rainwater-Friend initial-density term need them.
     def lj():
         return cp_visc["sigma_eta"] * 1e9, cp_visc["epsilon_over_k"]
 

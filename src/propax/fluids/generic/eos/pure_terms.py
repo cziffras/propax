@@ -24,43 +24,20 @@ def int_pow(x, k: int):
     return r
 
 
-# Above this the multiplication chain costs more than the SFU call it replaces.
-# Density exponents peak at 15 across the shipped fluid files, so this never bites.
 MAX_UNROLL = 32
 
 
 def static_pow(x, e):
-    """x**e for an exponent known at trace time.
-
-    Integral exponents become a multiplication chain (`int_pow`); the decimal
-    ones (Leachman-style tau exponents) keep the generic `pow`, there is
-    nothing to factor there.
-    """
     if isinstance(e, int) or (float(e).is_integer() and abs(e) <= MAX_UNROLL):
         return int_pow(x, int(e))
     return x**e
 
 
 def static_floats(values) -> tuple:
-    """Freeze a coefficient list into a hashable tuple usable as a static field.
-
-    For coefficients that are transcribed from the source correlation rather
-    than fitted here (`make_utils/eos.py` copies them verbatim from CoolProp),
-    so nothing in propax ever differentiates with respect to them. Static means
-    XLA sees literals and folds them into the expression instead of reading
-    them back from a parameter buffer, term by term.
-    """
     return tuple(float(v) for v in np.asarray(values, dtype=float).tolist())
 
 
 def static_exponents(values) -> tuple:
-    """Freeze an exponent list into a hashable tuple usable as a static field.
-
-    Integral values are narrowed to `int` so `static_pow` can unroll them;
-    anything genuinely fractional stays a `float` and keeps the generic `pow`.
-    Kept permissive on purpose: the registry builds every fluid at import time,
-    so a definition file with an unusual exponent must not break the import.
-    """
     out = []
     for v in np.asarray(values, dtype=float).tolist():
         out.append(int(round(v)) if float(v).is_integer() else float(v))
@@ -68,19 +45,6 @@ def static_exponents(values) -> tuple:
 
 
 def _from_log_derivatives(base, delta, tau, d, t, L_d, dL_d, L_t, dL_t):
-    """The six derivatives of one term n delta^d tau^t E(delta, tau).
-
-    Every residual family here has that shape, and differs only in E. Writing
-    the derivatives through E's *logarithmic* ones keeps them uniform:
-
-        dT/ddelta = T (d/delta + L_d)          L_d = dlnE/ddelta
-
-    and the second derivatives follow by differentiating that product once
-    more. No family has an E whose L_d depends on tau, or whose L_t depends on
-    delta, which is why the cross term is simply the product of the two firsts.
-
-    Returned in the order (a, a_d, a_t, a_dd, a_tt, a_dt).
-    """
     p_d = d / delta + L_d
     p_t = t / tau + L_t
     return (
@@ -94,8 +58,6 @@ def _from_log_derivatives(base, delta, tau, d, t, L_d, dL_d, L_t, dL_t):
 
 
 def _by_autodiff(f, delta, tau):
-    """(a, a_d, a_t, a_dd, a_tt, a_dt) of `f`, the fallback for a term that
-    does not spell its derivatives out."""
     x = jnp.stack([delta, tau])
 
     def g(z):
@@ -117,10 +79,6 @@ class IdealTerm(eqx.Module):
         raise NotImplementedError
 
     def tau_derivatives(self, delta, tau) -> Tuple:
-        """(a, a_t, a_tt). Only tau matters: alpha0's delta dependence is the
-        lone ln(delta) of `IdealLead`, and the thermodynamics never asks for
-        its derivative  the residual part carries every delta derivative.
-        """
         a, _, a_t, _, a_tt, _ = _by_autodiff(self.contribution, delta, tau)
         return a, a_t, a_tt
 
@@ -138,14 +96,6 @@ class ResidualTerm(eqx.Module):
         raise NotImplementedError
 
     def derivatives(self, delta, tau) -> Tuple:
-        """(a, a_d, a_t, a_dd, a_tt, a_dt).
-
-        Spelled out by every family below, because obtaining them by
-        differentiating `contribution` costs a forward-over-reverse pass that
-        the closed forms make unnecessary: they share the powers and the
-        exponential with the value itself. A term that does not override this
-        still works, one AD pass slower.
-        """
         return _by_autodiff(self.contribution, delta, tau)
 
 
@@ -228,7 +178,6 @@ class Polynomial(ResidualTerm):
         return total
 
     def derivatives(self, delta, tau) -> Tuple:
-        # E = 1, so both logarithmic derivatives vanish
         out = [jnp.zeros_like(delta * tau)] * 6
         zero = jnp.zeros_like(delta)
         for n, d, t in zip(self.n, self.d, self.t):
@@ -248,8 +197,6 @@ class ExponentialDensity(ResidualTerm):
     p: tuple = eqx.field(static=True)
 
     def contribution(self, delta, tau, namespace=jnp):
-        # Factored by p: the exponential depends on p alone, so the terms
-        # sharing one are summed first and multiplied by exp() once
         groups: dict = {}
         for n, d, t, p in zip(self.n, self.d, self.t, self.p):
             groups.setdefault(p, []).append((n, d, t))
@@ -263,7 +210,6 @@ class ExponentialDensity(ResidualTerm):
         return total
 
     def derivatives(self, delta, tau) -> Tuple:
-        # ln E = -delta^p, so L_d = -p delta^(p-1) and dL_d = -p(p-1) delta^(p-2)
         out = [jnp.zeros_like(delta * tau)] * 6
         zero = jnp.zeros_like(delta)
         for n, d, t, p in zip(self.n, self.d, self.t, self.p):
@@ -296,8 +242,6 @@ class Gaussian(ResidualTerm):
     gamma: tuple = eqx.field(static=True)
 
     def contribution(self, delta, tau, namespace=jnp):
-        # No factoring here: every term carries its own bell, so each exp() is
-        # already used exactly once
         total = 0.0 * delta * tau
         for n, d, t, phi, beta, D, gamma in zip(
             self.n, self.d, self.t, self.phi, self.beta, self.D, self.gamma
@@ -311,8 +255,6 @@ class Gaussian(ResidualTerm):
         return total
 
     def derivatives(self, delta, tau) -> Tuple:
-        # ln E = phi (delta - D)^2 + beta (tau - gamma)^2, whose logarithmic
-        # derivatives are linear: L_d = 2 phi (delta - D), dL_d = 2 phi
         out = [jnp.zeros_like(delta * tau)] * 6
         for n, d, t, phi, beta, D, gamma in zip(
             self.n, self.d, self.t, self.phi, self.beta, self.D, self.gamma
@@ -360,8 +302,6 @@ class GeneralizedExponential(ResidualTerm):
     g: tuple = eqx.field(static=True)
 
     def contribution(self, delta, tau, namespace=jnp):
-        # same factoring as `ExponentialDensity`, keyed on the (g, p) pair that
-        # fully determines the exponential
         groups: dict = {}
         for n, d, t, p, g in zip(self.n, self.d, self.t, self.p, self.g):
             groups.setdefault((g, p), []).append((n, d, t))
@@ -375,7 +315,6 @@ class GeneralizedExponential(ResidualTerm):
         return total
 
     def derivatives(self, delta, tau) -> Tuple:
-        # ln E = -g delta^p, the `ExponentialDensity` case scaled by g
         out = [jnp.zeros_like(delta * tau)] * 6
         zero = jnp.zeros_like(delta)
         for n, d, t, p, g in zip(self.n, self.d, self.t, self.p, self.g):

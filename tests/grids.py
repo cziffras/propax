@@ -16,16 +16,11 @@ N_DOME = 200
 
 
 def _inside(lo: float, hi: float, n: int, margin: float, space):
-    """`n` points spanning [lo, hi] without touching either end."""
     edge = margin * (hi - lo)
     return space(lo + edge, hi - edge, n)
 
 
 def dome_line(saturation, n: int = N_DOME, margin: float = MARGIN):
-    """
-    The branches merge at the critical point and rho_V has nothing left at the
-    triple point, so the curve is sampled strictly between them.
-    """
     return _inside(
         float(saturation.T_min), float(saturation.T_crit), n, margin, jnp.linspace
     )
@@ -61,7 +56,6 @@ class Grid:
         )
 
     def sample(self, n: int, seed: int = 0) -> "Grid":
-        """A seeded subset, for the tests that cannot afford every node."""
         if n >= len(self):
             return self
         drawn = np.random.default_rng(seed).choice(len(self), size=n, replace=False)
@@ -74,16 +68,6 @@ class Grid:
 def build(
     interface, n_rho: int = N_RHO, n_T: int = N_T, margin: float = MARGIN
 ) -> Grid:
-    """
-    Density is geometric because it spans decades between the dilute gas and
-    the compressed liquid, temperature linear between the triple point and the
-    correlation's ceiling.
-
-    `margin` backs off both ends of each axis by that fraction of its width.
-    Landing exactly on the triple point puts the whole first row at the foot of
-    the dome, where rho_V is very low and the lever rule has nothing to divide by,
-    so the solvers rightly refuse and the grid would be testing its own edge.
-    """
     eos, sat = interface.eos, interface.saturation
 
     T = _inside(float(eos.T_triple), float(eos.T_max), n_T, margin, jnp.linspace)

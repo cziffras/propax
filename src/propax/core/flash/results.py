@@ -68,7 +68,6 @@ def fill_result_dict(partial_result: Mapping, dtype, transport: bool = False) ->
 
 
 def as_mixed(tvar: ThermoVar, value):
-    """The form the lever rule is linear in: specific volume for a density."""
     return 1.0 / value if tvar.spec.invert_for_mixing else value
 
 
@@ -77,8 +76,6 @@ def get_sat_bounds(sat_state: SaturationResult, tvar: ThermoVar):
         raise ValueError(f"Variable {tvar.value} cannot be an input")
 
     if tvar.spec.sat_key_unique:
-        # `tvar.value` is the CoolProp key; SaturationResult carries the same
-        # names, see _state
         value = as_mixed(tvar, getattr(sat_state, tvar.value))
         return value, value
 

@@ -7,8 +7,6 @@ import mpmath as mp
 
 @dataclass(frozen=True)
 class Precision:
-    """`tol` is the bar; every precision below is chosen to clear it."""
-
     tol: float = 1e-13
     """What a Chebyshev piece must certify before the splitting accepts it.
     Every precision below follows from it."""
@@ -31,18 +29,15 @@ class Precision:
     nothing to do with the critical point."""
 
     def newton_tol(self, dps: int) -> mp.mpf:
-        """Relative step at which a Newton run at `dps` digits stops."""
         return mp.mpf(10) ** (-(dps - self.newton_headroom))
 
     def guard_digits(self, theta) -> int:
-        """Working precision to add at this distance from T_crit."""
         th = mp.mpf(theta)
         if th <= 0:
             return self.guard_floor
         return int(mp.ceil(mp.mpf(self.guard_slope) * -mp.log10(th))) + self.guard_floor
 
     def working_dps(self, theta) -> int:
-        """The precision a saturated pair at this theta is actually solved at."""
         return self.dps + self.guard_digits(theta)
 
 

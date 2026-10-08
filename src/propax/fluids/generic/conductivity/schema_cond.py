@@ -13,7 +13,6 @@ __all__ = [
     "ConductivityDiluteBlock",
     "ConductivityResidualBlock",
     "SlotComposedConductivityDefinition",
-    "ConductivityDefinition",
 ]
 
 
@@ -76,12 +75,6 @@ class PolynomialExponentialResidualBlock(BaseModel):
 
 
 class PolynomialResidualBlock(BaseModel):
-    """delta_lambda = sum B_i (rho/rho_reducing)^d_i (T_reducing/T)^t_i.
-
-    The exponential-free residual (CoolProp `residual:polynomial`); the same
-    family as polynomial_and_exponential with the damping absent, but reduced by
-    the transport correlation's own T/rho rather than the EOS critical point"""
-
     type: Literal["polynomial"]
     T_reducing: float  # K
     rho_reducing: float  # kg/m3
@@ -127,20 +120,8 @@ ConductivityResidualBlock = Annotated[
 
 
 class SlotComposedConductivityDefinition(BaseModel):
-    """
-    "slot_composed": lambda = lambda0(T) + delta_lambda + delta_lambda_c, each
-    slot naming its own form (mirrors CoolProp's own layout)
-    """
-
-    model: Literal["slot_composed"]
+    model: str = "slot_composed"
     reference: str = ""
     dilute: ConductivityDiluteBlock
     residual: Optional[ConductivityResidualBlock] = None
     critical: Optional[SimplifiedOlchowySengersBlock] = None
-
-
-# alias
-ConductivityDefinition = Annotated[
-    Union[SlotComposedConductivityDefinition],
-    Field(discriminator="model"),
-]

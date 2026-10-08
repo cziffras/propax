@@ -18,7 +18,6 @@ N_PROBE = 400
 BY_INTERNAL = {v.internal_key: v for v in ThermoVar}
 INPUTS = (ThermoVar.D, ThermoVar.T)
 
-# CoolProp spells these `d(P)/d(D)|T`
 DERIVATIVES = (
     (ThermoVar.P, ThermoVar.D, ThermoVar.T),
     (ThermoVar.P, ThermoVar.T, ThermoVar.D),
@@ -53,7 +52,6 @@ def test_every_property_matches_the_source(grid, cp_fluid):
 
 
 def test_the_derivatives_match_the_source(eos, grid, cp_fluid):
-    """Autodiff against the same derivatives as CoolProp publishes them."""
     probe = grid.where(grid.single_phase).sample(N_PROBE // 4)
     rho, T = probe.rho, probe.T
 

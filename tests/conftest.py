@@ -94,13 +94,11 @@ def saturation(props):
 
 @pytest.fixture(scope="session")
 def grid(props):
-    """The fluid's domain sampled once, shared by every test that needs states."""
     return grids.build(props)
 
 
 @pytest.fixture(scope="session")
 def dome(saturation):
-    """Temperatures along the saturation curve, for the tests that walk it."""
     return grids.dome_line(saturation)
 
 

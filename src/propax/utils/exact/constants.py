@@ -59,7 +59,6 @@ def density_ceiling(eos, rho_L_triple: float) -> float:
         state, derivs = eos.props_rhoT(rho, jnp.asarray(T), with_derivatives=True)
         return state[ThermoVar.P] - P_max, derivs["dP_drho"]
 
-    # the walk above leaves P_max bracketed where P rises with rho
     rho_mass, _ = newton_loop(
         residual,
         jnp.asarray(lo),

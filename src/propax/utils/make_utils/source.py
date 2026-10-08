@@ -1,7 +1,3 @@
-"""
-CoolProp access layer for the fluid converter
-"""
-
 import json
 import re
 from pathlib import Path
@@ -21,23 +17,12 @@ def require_coolprop():
 
 
 def load_coolprop_fluid(cp_name: str) -> dict:
-    """Full CoolProp fluid definition (EOS / TRANSPORT / INFO blocks)."""
     CP = require_coolprop()
     cp = json.loads(CP.get_fluid_param_string(cp_name, "JSON"))
     return cp[0] if isinstance(cp, list) else cp
 
 
 def hardcoded_in(block) -> str | None:
-    """The name of the hardcoded correlation inside a transport block, if any.
-
-    CoolProp marks these with a `hardcoded` key and no coefficients: the model
-    lives in its C++ and there is nothing in the JSON to transcribe. The mark
-    sits at the top of the block for a wholly hardcoded property, and on a
-    single slot when only one term is (hydrogen's higher-order viscosity). A
-    slot carrying it has no `type` either, so a scan keyed on `type` walks
-    straight past it and the property looks covered by the slots that remain.
-    """
-
     if not isinstance(block, dict):
         return None
     named = hardcoded_here(block)
