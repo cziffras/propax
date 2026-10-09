@@ -131,7 +131,7 @@ ViscosityHigherOrderBlock = Annotated[
 
 
 class SlotComposedViscosityDefinition(BaseModel):
-    model: str = "slot_composed"
+    model: Literal["slot_composed"] = "slot_composed"
     reference: str = ""
     molar_mass: float  # kg/mol
     dilute: ViscosityDiluteBlock

@@ -120,7 +120,7 @@ ConductivityResidualBlock = Annotated[
 
 
 class SlotComposedConductivityDefinition(BaseModel):
-    model: str = "slot_composed"
+    model: Literal["slot_composed"] = "slot_composed"
     reference: str = ""
     dilute: ConductivityDiluteBlock
     residual: Optional[ConductivityResidualBlock] = None

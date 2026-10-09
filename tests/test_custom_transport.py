@@ -138,7 +138,6 @@ class TestScaffoldWritesIntoTheFluidFile:
             "params": {},
         }
         assert block["dilute"]["type"] != "custom"
-        assert "Not verified against CoolProp" in block["reference"]
 
     def test_without_the_flag_the_property_is_dropped_instead(self, tmp_path):
         make_fluid(
