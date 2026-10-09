@@ -72,7 +72,10 @@ class Superancillary(eqx.Module):
         )
 
     def s_of_T(self, T):
-        return jnp.sqrt(self.theta_of_T(T))
+        theta = self.theta_of_T(T)
+        # reverse mode must not encounter a inf value
+        inside = theta > 0.0
+        return jnp.where(inside, jnp.sqrt(jnp.where(inside, theta, 1.0)), 0.0)
 
     def T_of_s(self, s):
         return self.T_of_theta(jnp.asarray(s) ** 2)
