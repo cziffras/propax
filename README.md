@@ -137,8 +137,8 @@ Cubic EOS (SRK, Peng–Robinson) and PC-SAFT are not supported either
 
 ```
 pip install "propax[coolprop]"
-python -m propax.make_fluid Argon # transcribe the EOS, then fit its saturation curve (check for options with --help)
-python -m propax.make_fluid --list-convertible [e|v|c]
+python scripts/make_fluid.py Argon # transcribe the EOS, then fit its saturation curve (check for options with --help)
+python scripts/make_fluid.py --list-convertible [e|v|c]
 ```
 
 This is useful to check or change a shipped fluid, or to add one CoolProp gains
@@ -156,12 +156,17 @@ uses bicubic tables instead, built with the package's own solvers, with no CoolP
 dependency. Their derivatives come from autodiff, which also makes the bicubics
 more precise.
 
-```
-python -m propax.build_tables n-propane --pair P H --pair D U \
-    --bounds P=1e4:5e6 H=-3e5:1.5e6 D=3.5:717 U=-2.3e5:1.4e6
-python -m propax.build_tables --list                   # what the cache holds, and its size
-python -m propax.build_tables --remove argon           # free one fluid
-python -m propax.build_tables --clear                  # free everything
+```python
+from propax import tables
+
+tables.create_all_tables(
+    "n-propane",
+    pairs=[("P", "H"), ("D", "U")],
+    bounds={"P": (1e4, 5e6), "H": (-3e5, 1.5e6), "D": (3.5, 717), "U": (-2.3e5, 1.4e6)},
+)
+tables.cached_fluids()                                      # what the cache holds, and its size
+tables.clear_cache(["argon"])                               
+tables.clear_cache()                                        # free everything
 ```
 
 - **Coverage:** only the pairs you ask for, over the bounds you give for each of
@@ -170,9 +175,8 @@ python -m propax.build_tables --clear                  # free everything
   output is False in both cases.
 - **Size:** a few hundred MB per fluid, which is why tables are built on demand
   rather than shipped.
-- **Location:** `~/.cache/propax/<fluid>/`, or anywhere with `PROPAX_TABLE_DIR` or
-  `--table-dir`.
-- **Precision:** `--target` (1e-5 by default) adapts the grids to the lightest ones
+- **Location:** `~/.cache/propax/<fluid>/`, or anywhere with `PROPAX_TABLE_DIR`.
+- **Precision:** `target` (1e-5 by default) adapts the grids to the lightest ones
   meeting that tolerance. Tables are designed for float32-level tolerances
   (~1e-5 to ~1e-7 rtol). When you need more, use `flash`, which needs no table.
 

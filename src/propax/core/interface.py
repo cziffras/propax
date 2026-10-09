@@ -80,6 +80,7 @@ class Interface(eqx.Module):
         fluid_name: str,
         table_dtype: Type[jnp.dtype] = jnp.float32,
         with_transport: bool = True,
+        with_tables: bool = True,
     ) -> "Interface":
         """Build the interface for one fluid, loading whatever tables exist.
 
@@ -94,6 +95,9 @@ class Interface(eqx.Module):
                 carries no such correlation, which is the common case. Either
                 way every EOS property still works; only
                 `flash(..., transport=True)` needs them.
+            with_tables: Loads precomputed tables and enables interpolated fast
+                flashes for the specified fluid and pairs across a given range
+                for each variable specified at build time.
 
         Raises:
             ValueError: if no fluid of that name is registered.
@@ -130,34 +134,36 @@ class Interface(eqx.Module):
         table_for_pair = {}
         missing: list = []
 
-        built = get_table_path() / key_name
+        if with_tables:
+            built = get_table_path() / key_name
 
-        def load(name: str) -> BicubicInterpolation:
-            return BicubicInterpolation.create(str(built / name), dtype=table_dtype)
+            def load(name: str) -> BicubicInterpolation:
+                return BicubicInterpolation.create(str(built / name), dtype=table_dtype)
 
-        for spec in TABLE_REGISTRY:
-            dome = f"{spec.name}_dome"
-            try:
-                interpolators[spec.name] = load(spec.name)
-                interpolators[dome] = load(dome)
-            except (OSError, ValueError) as why:
-                missing.append(f"{spec.name} ({why})")
-                continue
-            axes = (spec.x_axis.variable, spec.y_axis.variable)
-            table_for_pair[frozenset(axes)] = spec.name
+            for spec in TABLE_REGISTRY:
+                dome = f"{spec.name}_dome"
+                try:
+                    interpolators[spec.name] = load(spec.name)
+                    interpolators[dome] = load(dome)
+                except (OSError, ValueError) as why:
+                    missing.append(f"{spec.name} ({why})")
+                    continue
+                axes = (spec.x_axis.variable, spec.y_axis.variable)
+                table_for_pair[frozenset(axes)] = spec.name
 
-        if missing:
-            logger.info(
-                "%s: %d of %d table(s) not loaded from %s, `fast_flash` is "
-                "unavailable for them until `python -m propax.build_tables "
-                "%s --pair X Y --bounds X=lo:hi Y=lo:hi` has run. Missing: %s",
-                key_name,
-                len(missing),
-                len(TABLE_REGISTRY),
-                built,
-                key_name,
-                "; ".join(missing),
-            )
+            if missing:
+                logger.info(
+                    "%s: %d of %d table(s) not loaded from %s, `fast_flash` is "
+                    "unavailable for them until `propax.tables.create_all_tables("
+                    '"%s", pairs=[("X", "Y")], bounds={"X": (lo, hi), "Y": (lo, hi)})` '
+                    "has run. Missing: %s",
+                    key_name,
+                    len(missing),
+                    len(TABLE_REGISTRY),
+                    built,
+                    key_name,
+                    "; ".join(missing),
+                )
 
         return cls(
             eos=eos,
@@ -300,6 +306,11 @@ class Interface(eqx.Module):
             FileNotFoundError: if no table has been built for this pair. The
                 message names the command that builds it.
         """
+        if not self.interpolators:
+            raise ValueError(
+                "The interface was constucted without loading interpolators, "
+                "set `with_tables` to True to fix."
+            )
         dtype = _dtype()
         tvar1 = ThermoVar(name1)
         tvar2 = ThermoVar(name2)
@@ -309,9 +320,10 @@ class Interface(eqx.Module):
                 {s.x_axis.variable, s.y_axis.variable} == pair for s in TABLE_REGISTRY
             )
             hint = (
-                f"build it with `python -m propax.build_tables {self.fluid_name} "
-                f"--pair {tvar1.value} {tvar2.value} --bounds {tvar1.value}=lo:hi "
-                f"{tvar2.value}=lo:hi`, or use `flash`, which needs none"
+                f'build it with `propax.tables.create_all_tables("{self.fluid_name}", '
+                f'pairs=[("{tvar1.value}", "{tvar2.value}")], '
+                f'bounds={{"{tvar1.value}": (lo, hi), "{tvar2.value}": (lo, hi)}})`, '
+                f"or use `flash`, which needs none"
                 if tabled
                 else "this pair is never tabulated, use `flash`"
             )

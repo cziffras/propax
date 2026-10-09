@@ -116,12 +116,15 @@ with the name and the exact signature it owes.
 ## Command line
 
 ```
-python -m propax.make_fluid <Name>                    transcribe a fluid, fit its curve
-python -m propax.make_fluid --list-convertible        the names this converter accepts
-python -m propax.build_tables <fluid> --pair X Y --bounds X=lo:hi Y=lo:hi
-                                                      build interpolation tables
-python -m propax.build_tables --list                  what the cache holds, and its size
-python -m propax.utils.make_utils.coverage            what converts, and what blocks the rest
+python scripts/make_fluid.py <Name>                   transcribe a fluid, fit its curve
+python scripts/make_fluid.py --list-convertible       the names this converter accepts
+```
+
+```python
+from propax import tables
+
+tables.create_all_tables("<fluid>", pairs=[("X", "Y")], bounds={"X": (lo, hi), "Y": (lo, hi)})
+tables.cached_fluids()                                # what the cache holds, and its size
 ```
 
 `make_fluid` needs the `coolprop` extra; the runtime never imports it. A table

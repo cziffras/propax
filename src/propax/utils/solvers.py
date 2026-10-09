@@ -101,7 +101,7 @@ def _newton_loop_jvp(
 def newton_loop(params, *, consts, carry, residual, lower, upper, x0, max_steps, rtol):
     """A differentiable Newton that cannot leave its bracket.
 
-    `func` returns `(value, derivative)`
+    `residual` returns `(value, derivative)`
 
     Each step tightens the enclosure on the sign first, then takes
     the Newton step only if it lands strictly inside the tightened bracket;

@@ -2,7 +2,7 @@
 Generate a propax fluid definition file from an installed CoolProp fluid.
 
 NOTE : CoolProp is a dev-time dependency: pip install -e ".[coolprop]".
-After generating a file, build its tables with `python -m propax.build_tables`.
+After generating a file, build its tables with `propax.tables.create_all_tables`.
 """
 
 import argparse
@@ -11,9 +11,9 @@ from pathlib import Path
 
 import jax
 
-from .fluids.schema import DATA_DIR
-from .utils.make_utils import fit_superancillary, make_fluid
-from .utils.make_utils.coverage import convertible_fluids
+from propax.fluids.schema import DATA_DIR
+from propax.utils.make_utils import fit_superancillary, make_fluid
+from propax.utils.make_utils.coverage import convertible_fluids
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -30,7 +30,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "print the fluids this converter accepts, one per line, and exit. "
             "Filter by properties: 'e' (EOS only), 'c' (EOS + conductivity), "
             "'v' (EOS + viscosity), or leave empty for all. "
-            "Example: `python -m propax.make_fluid --list-convertible e (visualize all available EOS)`"
+            "Example: `python scripts/make_fluid.py --list-convertible e (visualize all available EOS)`"
         ),
     )
     parser.add_argument(

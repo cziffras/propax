@@ -1,14 +1,11 @@
 import logging
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
-jax.config.update("jax_enable_x64", True)
-
-import jax.numpy as jnp  # noqa: E402
-
-from ...core.saturation import Superancillary  # noqa: E402
-from ...fluids._registry import EQS_REGISTRY  # noqa: E402
+from ...core.saturation import Superancillary
+from ...fluids._registry import EQS_REGISTRY
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())

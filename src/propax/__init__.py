@@ -3,8 +3,8 @@ from .fluids.generic import (
     register_conductivity_residual,
     register_viscosity_higher_order,
 )
+from .utils.build_utils import tables
 
-# restrain what can be imported if user enters `from propax import *`
 __all__ = [
     "Interface",
     "register_viscosity_higher_order",

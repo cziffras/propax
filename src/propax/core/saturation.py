@@ -161,6 +161,6 @@ class Superancillary(eqx.Module):
         if block is None:
             raise ValueError(
                 f"{fluid_name!r} carries no superancillary: fit it with "
-                "`python -m propax.make_fluid <name> --refit-superancillary`"
+                "`python scripts/make_fluid.py <name> --refit-superancillary`"
             )
         return cls.from_block(eos, block, dtype)

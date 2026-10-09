@@ -1,22 +1,18 @@
 import itertools
 import logging
 from pathlib import Path
-from typing import Optional
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
-jax.config.update("jax_enable_x64", True)
-
-import jax.numpy as jnp  # noqa: E402
-
-from ...core.config import TableSpec, ThermoVar, get_table_path  # noqa: E402
-from ...core.flash.results import as_mixed, mixture_state  # noqa: E402
-from ...core.flash.single_phase import solve_single_phase  # noqa: E402
-from ...core.flash.two_phase import solve_two_phase  # noqa: E402
-from ...core.interp import BicubicInterpolation  # noqa: E402
-from ...core.tolerances import TOL  # noqa: E402
-from .helpers import _get_fluid_modules, _mapped, fill_ghost  # noqa: E402
+from ...core.config import TableSpec, ThermoVar, get_table_path
+from ...core.flash.results import as_mixed, mixture_state
+from ...core.flash.single_phase import solve_single_phase
+from ...core.flash.two_phase import solve_two_phase
+from ...core.interp import BicubicInterpolation
+from ...core.tolerances import TOL
+from .helpers import _get_fluid_modules, _mapped, fill_ghost
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -169,18 +165,32 @@ def _build_table(path: Path, cfg: TableSpec, node, outputs, ax1, ax2) -> None:
         return values, (values, ok)
 
     U1, U2 = np.meshgrid(ax1, ax2, indexing="ij")
-    derivatives = jax.jacfwd(with_values, argnums=(0, 1), has_aux=True)
-    (dx1, dx2), (f, ok) = _mapped(derivatives, U1.ravel(), U2.ravel())
+
+    def with_derivatives(u1, u2):
+        def d_du1(x):
+            values, dx1, ok = jax.jvp(
+                node, (u1, x), (jnp.ones_like(u1), jnp.zeros_like(x)), has_aux=True
+            )
+            return (values, dx1), ok
+
+        (values, dx1), (dx2, dx1dx2), ok = jax.jvp(
+            d_du1,
+            (u2,),
+            (jnp.ones_like(u2),),
+            has_aux=True,
+        )
+
+        return values, dx1, dx2, dx1dx2, ok
+
+    # returns exact cross derivatives : np gradient was faulty and probe error
+    # only measured errors onto the edges of each cells where the Hermite weights
+    # are 0 for the crossed derivative (the bicubic collapses to a simple cubic
+    # interpolation onto the edges), this error went unnoticed
+    f, dx1, dx2, dx1dx2, ok = _mapped(with_derivatives, U1.ravel(), U2.ravel())
 
     shape = (ax1.size, ax2.size, len(outputs))
-    f, dx1, dx2 = f.reshape(shape), dx1.reshape(shape), dx2.reshape(shape)
+    f, dx1, dx2, dx1dx2 = (a.reshape(shape) for a in (f, dx1, dx2, dx1dx2))
     ok = ok.reshape(U1.shape)
-
-    # a failed node's derivatives are finite but meaningless NaN keeps them out
-    # of its neighbours' cross derivative, yields greater errors at the edges of
-    # the domain
-    dx1 = np.where(ok[..., None], dx1, np.nan)
-    dx1dx2 = np.gradient(dx1, ax2, axis=1)
 
     everything = np.concatenate([f, dx1, dx2, dx1dx2], axis=-1)
     solved = ok & np.isfinite(everything).all(axis=-1)
@@ -216,6 +226,11 @@ def _probe_errors(table, cfg: TableSpec, node, ax1, ax2, along_x1: bool):
 
     NaN where nothing is measured: the solve failed there, or the edge rests on
     an extrapolated node, which makes no claim of precision.
+
+    TODO: measure the error at the cell center too. Implement a new splitting policy
+    that could be --> an edge that misses splits its axis; a centre that misses while
+    its edges pass splits both axes (cross term, invisible on edges). Nothing was measured
+    yet.
     """
     extrapolated = table.extrapolated.array
     if along_x1:  # replaced by its middle points
@@ -286,7 +301,6 @@ def _refine(path, cfg, node, outputs, ax1, ax2, target, quantile, max_nodes):
 def build_adaptive_table(
     fluid_name: str,
     table_config: TableSpec,
-    tables_base_path: Optional[Path] = None,
     target: float = 1e-5,
     n_start: int = 96,
     quantile: float = 0.002,
@@ -294,21 +308,23 @@ def build_adaptive_table(
 ) -> Path:
     """Both tables of a pair, each refined until it meets `target`. Returns the
     single-phase table's path, the mixture one sits beside it with `_dome`."""
-    fluid, eos, saturation = _get_fluid_modules(fluid_name)
-    base = (tables_base_path or get_table_path()) / fluid
-    x, y = table_config.x_axis, table_config.y_axis
-    for name, node, outputs, (x_range, y_range) in _branches(
-        table_config, eos, saturation
-    ):
-        _refine(
-            base / name / "table_data.npz",
-            table_config,
-            node,
-            outputs,
-            _axis(x, *x_range, n_start),  # type: ignore
-            _axis(y, *y_range, n_start),  # type: ignore
-            target,
-            quantile,
-            max_nodes,
-        )
+    # float64 for the build only
+    with jax.enable_x64(True):
+        fluid, eos, saturation = _get_fluid_modules(fluid_name)
+        base = get_table_path() / fluid
+        x, y = table_config.x_axis, table_config.y_axis
+        for name, node, outputs, (x_range, y_range) in _branches(
+            table_config, eos, saturation
+        ):
+            _refine(
+                base / name / "table_data.npz",
+                table_config,
+                node,
+                outputs,
+                _axis(x, *x_range, n_start),  # type: ignore
+                _axis(y, *y_range, n_start),  # type: ignore
+                target,
+                quantile,
+                max_nodes,
+            )
     return base / table_config.name / "table_data.npz"

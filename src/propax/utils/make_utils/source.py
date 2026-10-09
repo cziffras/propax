@@ -10,8 +10,7 @@ def require_coolprop():
         import CoolProp.CoolProp as CP
     except ImportError as e:
         raise SystemExit(
-            "propax.make_fluid needs CoolProp (dev-time only): "
-            'pip install -e ".[coolprop]"'
+            'make_fluid needs CoolProp (dev-time only): pip install -e ".[coolprop]"'
         ) from e
     return CP
 
