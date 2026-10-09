@@ -55,15 +55,18 @@ def density_ceiling(eos, rho_L_triple: float) -> float:
                 f"before reaching P_max = {P_max:.3e} Pa at {T:.2f} K"
             )
 
-    def residual(rho, _):
-        state, derivs = eos.props_rhoT(rho, jnp.asarray(T), with_derivatives=True)
-        return state[ThermoVar.P] - P_max, derivs["dP_drho"]
+    def residual(rho, eos_, P_target, carry):
+        state, derivs = eos_.props_rhoT(rho, jnp.asarray(T), with_derivatives=True)
+        return state[ThermoVar.P] - P_target, derivs["dP_drho"], carry
 
     rho_mass, _ = newton_loop(
-        residual,
-        jnp.asarray(lo),
-        jnp.asarray(hi),
-        None,
+        jnp.asarray(P_max),
+        consts=eos,
+        carry=None,
+        residual=residual,
+        lower=jnp.asarray(lo),
+        upper=jnp.asarray(hi),
+        x0=None,
         max_steps=TOL.caps.newton_steps,
         rtol=TOL.acc.newton_rtol,
     )

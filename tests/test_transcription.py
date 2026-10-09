@@ -8,7 +8,6 @@ CP = pytest.importorskip(
 )
 
 from propax.core.config import ThermoVar  # noqa: E402
-from propax.fluids.schema import DATA_DIR, load_fluid_file  # noqa: E402
 
 from .conftest import TRANSCRIPTION  # noqa: E402
 

@@ -1,4 +1,3 @@
-from functools import partial
 from typing import NamedTuple, Optional, Tuple
 
 import jax
@@ -65,7 +64,6 @@ def _one_dim_slope(key: str, solve_for_T: bool, props, derivs) -> Array:
         raise KeyError(f"Key {key} is not 1d bracketable. ")
 
 
-@partial(jax.custom_jvp, nondiff_argnums=(0, 1, 2))
 def _one_dim_root(
     key: str,
     scale: float,
@@ -76,37 +74,29 @@ def _one_dim_root(
     lo: Array,
     hi: Array,
 ) -> Array:
-    def residual(x, _):
-        rho, T = (known, x) if solve_for_T else (x, known)
-        props, derivs = eos.props_rhoT(rho, T, with_derivatives=True)
-        f = (props[key] - target) / scale
+    def residual(x, eos_, params, carry):
+        known_, target_ = params
+        rho, T = (known_, x) if solve_for_T else (x, known_)
+        props, derivs = eos_.props_rhoT(rho, T, with_derivatives=True)
+        f = (props[key] - target_) / scale
         df = _one_dim_slope(key, solve_for_T, props, derivs) / scale
-        return pick(jnp.isfinite(f), f, _OUT_OF_DOMAIN), df
+        return pick(jnp.isfinite(f), f, _OUT_OF_DOMAIN), df, carry
 
     x, _ = newton_loop(
-        residual,
-        lo,
-        hi,
-        None,
+        (known, target),
+        consts=eos,
+        carry=None,
+        residual=residual,
+        lower=lo,
+        upper=hi,
+        x0=None,
         max_steps=TOL.caps.newton_steps,
         rtol=TOL.acc.newton_rtol,
     )
     return jnp.asarray(x)
 
 
-@_one_dim_root.defjvp
-def _one_dim_root_jvp(key, scale, solve_for_T, primals, tangents):
-    eos, known, target, lo, hi = primals
-    x = _one_dim_root(key, scale, solve_for_T, eos, known, target, lo, hi)
-
-    def value(x_, known_):
-        rho, T = (known_, x_) if solve_for_T else (x_, known_)
-        return eos.props_rhoT(rho, T)[key]
-
-    d_dx, d_dknown = jax.jacfwd(value, argnums=(0, 1))(x, known)
-    # implicit function theorem on y(x, known) = target
-    x_dot = (tangents[2] - d_dknown * tangents[1]) / d_dx
-    return x, x_dot
+##################################################
 
 
 def _bracket_for_T(
@@ -233,20 +223,23 @@ def _density_at_TP(
         rho_lo, _ = rho_bounds(saturation)
         seed = pick(lo > rho_lo, lo, P / (eos.R_spec * T))
 
-    def residual(rho, args):
-        eos_, T_, P_ = args
+    def residual(rho, eos_, params, carry):
+        T_, P_ = params
         props, derivs = eos_.props_rhoT(rho, T_, with_derivatives=True)
         f = (props[ThermoVar.P] - P_) / ThermoVar.P.spec.scale
         return (
             pick(jnp.isfinite(f), f, _OUT_OF_DOMAIN),
             derivs["dP_drho"] / ThermoVar.P.spec.scale,
+            carry,
         )
 
     rho, _ = newton_loop(
-        residual,
-        lo,
-        hi,
-        (eos, T, P),
+        (T, P),
+        consts=eos,
+        carry=None,
+        residual=residual,
+        lower=lo,
+        upper=hi,
         x0=seed,
         max_steps=TOL.caps.warm_newton_steps,
         rtol=TOL.acc.newton_rtol,

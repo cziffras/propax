@@ -137,17 +137,14 @@ Cubic EOS (SRK, Peng–Robinson) and PC-SAFT are not supported either
 
 ```
 pip install "propax[coolprop]"
-python -m propax.make_fluid Argon            # transcribe the EOS, then fit its saturation curve
-python -m propax.utils.make_utils.coverage   # what converts, and what blocks the rest
+python -m propax.make_fluid Argon # transcribe the EOS, then fit its saturation curve (check for options with --help)
+python -m propax.make_fluid --list-convertible [e|v|c]
 ```
 
 This is useful to check or change a shipped fluid, or to add one CoolProp gains
 after a release.
 
-The converter copies the Helmholtz coefficients (machine-precision EOS), checks the
-result against CoolProp to 1e-9, and checks each transport block to 1e-6. A
-correlation it cannot reproduce from published coefficients is omitted, never
-approximated. With `--transport-scaffold`, the property is kept instead: each slot
+A correlation it cannot reproduce from published coefficients can be implemented with `--transport-scaffold` : each slot
 CoolProp hardcodes gets a placeholder and its literature reference, ready to be
 implemented.
 

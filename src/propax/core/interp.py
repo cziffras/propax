@@ -154,9 +154,12 @@ def _abscissa_of(channel: ChebyshevPieces, component, value):
     def stored(x):
         return channel._stored(x)[component]
 
-    def residual(x, aim):
-        stored_x, slope = jax.jvp(stored, (x,), (jnp.ones_like(x),))
-        return stored_x - aim, slope
+    def residual(x, consts, aim, carry):
+        channel_, component_ = consts
+        stored_x, slope = jax.jvp(
+            lambda x_: channel_._stored(x_)[component_], (x,), (jnp.ones_like(x),)
+        )
+        return stored_x - aim, slope, carry
 
     at_lo, at_hi = stored(x_lo), stored(x_hi)
     low, high = jnp.minimum(at_lo, at_hi), jnp.maximum(at_lo, at_hi)
@@ -171,10 +174,12 @@ def _abscissa_of(channel: ChebyshevPieces, component, value):
     # so it stops at once instead of running every step of the batch
     aim = pick(in_range, held, stored(seed))
     x, _ = newton_loop(
-        residual,
-        x_lo,
-        x_hi,
         aim,
+        consts=(channel, component),
+        carry=None,
+        residual=residual,
+        lower=x_lo,
+        upper=x_hi,
         x0=seed,
         max_steps=TOL.caps.newton_steps,
         rtol=TOL.acc.newton_rtol,
