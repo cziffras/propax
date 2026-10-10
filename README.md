@@ -164,9 +164,9 @@ tables.create_all_tables(
     pairs=[("P", "H"), ("D", "U")],
     bounds={"P": (1e4, 5e6), "H": (-3e5, 1.5e6), "D": (3.5, 717), "U": (-2.3e5, 1.4e6)},
 )
-tables.cached_fluids()                                      # what the cache holds, and its size
+tables.cached_fluids() 
 tables.clear_cache(["argon"])                               
-tables.clear_cache()                                        # free everything
+tables.clear_cache()     
 ```
 
 - **Coverage:** only the pairs you ask for, over the bounds you give for each of
