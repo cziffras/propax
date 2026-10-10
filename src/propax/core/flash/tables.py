@@ -2,8 +2,8 @@ import jax.numpy as jnp
 
 from .._state import PropertyMap
 from ..config import ThermoVar
-from ..domain import is_two_phase
 from ..interp import BicubicInterpolation
+from .flash_utils import is_two_phase
 from .results import as_mixed
 
 

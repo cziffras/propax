@@ -2,9 +2,6 @@ from typing import Dict, FrozenSet, Optional
 
 from ..config import ThermoVar
 
-NATURAL = frozenset({ThermoVar.D, ThermoVar.T})
-
-
 # For more information, check `docs/flash.md`` :
 # Pairs whose flash reduces to a bracketed 1D solve, keyed by the natural
 # variable the pair pins down, some inequalities are proven :
@@ -20,41 +17,24 @@ NATURAL = frozenset({ThermoVar.D, ThermoVar.T})
 # ds/drho|_T = -rho^-2 alpha / kappa_T
 #
 # /!\ Shared so the runtime dispatch and the table build cannot drift apart
-BRACKETABLE: Dict[ThermoVar, FrozenSet[ThermoVar]] = {
-    ThermoVar.D: frozenset({ThermoVar.U, ThermoVar.S, ThermoVar.H}),
-    ThermoVar.T: frozenset({ThermoVar.P, ThermoVar.S}),
+
+# Pairs solved by a bracket on T laid over a bracket on rho: P fixes the
+# isobar, the caloric variable is monotone along it, and the inner density
+# solve is bracketed per branch --> see `single_phase.solve_nested`
+
+ROUTES: Dict[FrozenSet[ThermoVar], str] = {
+    frozenset({ThermoVar.D, ThermoVar.T}): "natural",
+    frozenset({ThermoVar.P, ThermoVar.Q}): "saturated",
+    frozenset({ThermoVar.T, ThermoVar.Q}): "saturated",
+    frozenset({ThermoVar.D, ThermoVar.U}): "one_dim",
+    frozenset({ThermoVar.D, ThermoVar.H}): "one_dim",
+    frozenset({ThermoVar.D, ThermoVar.S}): "one_dim",
+    frozenset({ThermoVar.T, ThermoVar.P}): "one_dim",
+    frozenset({ThermoVar.T, ThermoVar.S}): "one_dim",
+    frozenset({ThermoVar.P, ThermoVar.H}): "nested",
+    frozenset({ThermoVar.P, ThermoVar.S}): "nested",
+    frozenset({ThermoVar.P, ThermoVar.U}): "nested",
 }
-
-
-def one_dim_known_var(tvar1: ThermoVar, tvar2: ThermoVar) -> Optional[ThermoVar]:
-    """Which of (D, T) is the given variable when the pair reduces to a
-    bracketed 1D solve.
-
-    The resulting bracket has to contain a single root, which needs the target
-    to be strictly monotone in the unknown. `BRACKETABLE` carries the pairs where
-    that is proven: (D,U), (D,S), (T,P) and some others that empirically revealed
-    themselves as monotone outside the dome.
-
-    NOTE:
-    - This orients the single-phase dispatch and not the two-phase one
-    """
-    pair = {tvar1, tvar2}
-    for known, targets in BRACKETABLE.items():
-        if known not in pair:
-            continue
-        other = tvar2 if tvar1 == known else tvar1
-        if other in targets:
-            return known
-    return None
-
-
-def both_natural_pair(tvar1: ThermoVar, tvar2: ThermoVar) -> bool:
-    """Is the pair (D, T)? (natural inputs vars of the EOS)"""
-    return frozenset({tvar1, tvar2}) == NATURAL
-
-
-def is_degenerate_pair(tvar1: ThermoVar, tvar2: ThermoVar) -> bool:
-    return frozenset({tvar1, tvar2}) == frozenset({ThermoVar.P, ThermoVar.T})
 
 
 # Pairs propax declines, we also specify why they are declined (for now)
@@ -103,57 +83,9 @@ def check_supported(tvar1: ThermoVar, tvar2: ThermoVar) -> None:
         )
 
 
-# Pairs solved by a bracket on T laid over a bracket on rho: P fixes the
-# isobar, the caloric variable is monotone along it, and the inner density
-# solve is bracketed per branch --> see `single_phase.solve_nested`
-NESTED = frozenset(
-    {
-        frozenset({ThermoVar.P, ThermoVar.H}),
-        frozenset({ThermoVar.P, ThermoVar.S}),
-        frozenset({ThermoVar.P, ThermoVar.U}),
-    }
-)
-
-
-# Pairs a quality can be read with
-SATURATED = frozenset(
-    {
-        frozenset({ThermoVar.P, ThermoVar.Q}),
-        frozenset({ThermoVar.T, ThermoVar.Q}),
-    }
-)
-
-
-def is_saturated_pair(tvar1: ThermoVar, tvar2: ThermoVar) -> bool:
-    return frozenset({tvar1, tvar2}) in SATURATED
-
-
-def is_nested_pair(tvar1: ThermoVar, tvar2: ThermoVar) -> bool:
-    return frozenset({tvar1, tvar2}) in NESTED
-
-
 def route_of(tvar1: ThermoVar, tvar2: ThermoVar) -> Optional[str]:
-    if frozenset({tvar1, tvar2}) in INVALID_PAIRS:
-        return None
-    if is_saturated_pair(tvar1, tvar2):
-        return "saturated"
-    if both_natural_pair(tvar1, tvar2):
-        return "natural"
-    if is_nested_pair(tvar1, tvar2):
-        return "nested"
-    if is_degenerate_pair(tvar1, tvar2):
-        return "one_dim"
-    if one_dim_known_var(tvar1, tvar2) is not None:
-        return "one_dim"
-    return None
+    return ROUTES.get(frozenset({tvar1, tvar2}))
 
 
 def supported_pairs() -> Dict[FrozenSet[ThermoVar], str]:
-    inputs = [v for v in ThermoVar if v.spec.can_be_input]
-    found = {}
-    for i, first in enumerate(inputs):
-        for second in inputs[i + 1 :]:
-            route = route_of(first, second)
-            if route is not None:
-                found[frozenset({first, second})] = route
-    return found
+    return dict(ROUTES)

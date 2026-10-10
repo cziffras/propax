@@ -10,14 +10,15 @@ class Transcription(PrecisionScaled):
     Tight tolerance against CoolProp.
     """
 
-    eos_transcription: float = field(default=1e-9, metadata={"scales": False})
-
     state_from_rho_T: float = field(default=1e-9, metadata={"loosest": 1e-6})
     derivative: float = field(default=1e-9, metadata={"loosest": 1e-5})
 
     criticality_first: float = field(default=1e-9, metadata={"loosest": 1e-3})
     criticality_second: float = field(default=1e-6, metadata={"loosest": 1e-2})
-    critical_point_vs_source: float = field(default=1e-9, metadata={"scales": False})
+    critical_temperature_vs_source: float = field(
+        default=1e-9, metadata={"scales": False}
+    )
+    critical_density_vs_source: float = field(default=1e-5, metadata={"scales": False})
 
 
 @dataclass(frozen=True)

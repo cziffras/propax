@@ -28,8 +28,7 @@ def dome_line(saturation, n: int = N_DOME, margin: float = MARGIN):
 
 @dataclass(frozen=True)
 class Grid:
-    """A fluid's own domain, sampled once, with everything the tests read off it.
-
+    """
     The RhoT grid is sampled in fluid dependent bounds.
     """
 

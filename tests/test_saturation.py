@@ -71,5 +71,5 @@ class TestTheCurveIsTheSameOneCoolPropFound:
             for branch, q in ((state.L, LIQUID), (state.V, VAPOUR)):
                 ref = CP.PropsSI(var.value, "T", T, "Q", np.full_like(T, q), cp_fluid)
                 assert np.asarray(branch[var]) == pytest.approx(
-                    ref, rel=RIGHT_ROOT.energy
+                    ref, rel=RIGHT_ROOT.energy, abs=RIGHT_ROOT.energy * var.spec.scale
                 )

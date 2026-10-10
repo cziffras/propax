@@ -10,20 +10,18 @@ from propax.utils.types import jaxBool
 
 from ...utils.numerics import pick
 from ..config import ThermoVar
-from ..domain import T_bounds, node_is_valid, rho_bounds
 from ..saturation import Superancillary
 from ..tolerances import TOL
-from .dispatch import both_natural_pair, is_nested_pair, one_dim_known_var
+from .dispatch import route_of
+from .flash_utils import (
+    T_bounds,
+    is_a_root,
+    node_is_valid,
+    rho_bounds,
+    state_sensitivity,
+)
 
 _OUT_OF_DOMAIN = 1e6
-
-
-def _is_a_root(scaled_residual: Array, target: Array, scale: float) -> jaxBool:
-    reference = jnp.maximum(jnp.abs(target) / scale, 1.0)
-    return jnp.abs(scaled_residual) <= TOL.acc.root_atol * reference
-
-
-##################################################
 
 
 def _bracket_for_rho(
@@ -119,9 +117,10 @@ def solve_1d(
     rho_final, T_final = as_rho_T(x_final, known_safe)
 
     props = eos.props_rhoT(rho_final, T_final)
+    sensitivity = state_sensitivity(eos, rho_final, T_final)
     op_status = (
         inputs_finite
-        & _is_a_root((props[key] - target_safe) / scale, target_safe, scale)
+        & is_a_root(props[key], target_safe, jnp.maximum(scale, sensitivity[key]))
         & node_is_valid(saturation, rho_final, T_final)
         & jnp.logical_not(is_inactive)
     )
@@ -249,10 +248,12 @@ def solve_nested(
     rho_sol = _density_at_TP(eos, saturation, T_sol, P, seed=rho_prev)
 
     props = eos.props_rhoT(rho_sol, T_sol)
-    P_scale = ThermoVar.P.spec.scale
+    sensitivity = state_sensitivity(eos, rho_sol, T_sol)
+    #
+    P_scale = jnp.maximum(ThermoVar.P.spec.scale, sensitivity[ThermoVar.P])
     op_status = (
-        _is_a_root((props[ThermoVar.P] - P) / P_scale, P, P_scale)
-        & _is_a_root((props[key] - y) / scale, y, scale)
+        is_a_root(props[ThermoVar.P], P, P_scale)
+        & is_a_root(props[key], y, jnp.maximum(scale, sensitivity[key]))
         & inputs_finite
         & jnp.logical_not(is_inactive)
         & node_is_valid(saturation, rho_sol, T_sol)
@@ -269,7 +270,8 @@ def solve_single_phase(
     val2: Array,
     is_inactive: jaxBool,
 ) -> Tuple[jaxBool, Array, Array]:
-    if both_natural_pair(tvar1, tvar2):
+    route = route_of(tvar1, tvar2)
+    if route == "natural":
         rho, T = (val1, val2) if tvar1 == ThermoVar.D else (val2, val1)
         ok = (
             jnp.isfinite(rho)
@@ -279,15 +281,15 @@ def solve_single_phase(
         )
         return ok, rho, T
 
-    if is_nested_pair(tvar1, tvar2):
+    if route == "nested":
         val_P, tvar_other, val_other = (
             (val1, tvar2, val2) if tvar1 == ThermoVar.P else (val2, tvar1, val1)
         )
         return solve_nested(eos, saturation, tvar_other, val_P, val_other, is_inactive)
 
-    known = one_dim_known_var(tvar1, tvar2)
-    if known is None:
+    if route != "one_dim":
         raise ValueError(f"({tvar1.value}, {tvar2.value}) has no single-phase solver")
+    known = ThermoVar.D if ThermoVar.D in (tvar1, tvar2) else ThermoVar.T
     val_known, tvar_other, val_other = (
         (val1, tvar2, val2) if tvar1 == known else (val2, tvar1, val1)
     )

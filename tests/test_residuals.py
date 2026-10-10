@@ -5,6 +5,7 @@ import pytest
 
 from propax import Interface
 from propax.core.config import ThermoVar
+from propax.core.flash.flash_utils import state_sensitivity
 
 from .conftest import RESIDUAL
 
@@ -25,7 +26,9 @@ def _quality(saturation, rho, T):
 
 def _worst_residual(got, wanted, scale, keep):
     got, wanted = np.asarray(got), np.asarray(wanted)
-    denom = np.maximum(scale, np.abs(wanted))
+    denom = np.maximum(
+        scale, np.abs(wanted)
+    )  # gives either an a tol for small values or a rtol for greater ones
     return float((np.abs(got - wanted) / denom)[keep].max())
 
 
@@ -73,11 +76,14 @@ def test_the_flash_zeroes_its_residual(props, grid, pair):
         f"the flash gave up on {1 - solved.mean():.1%} of {len(off_dome)} states"
     )
 
-    back = jax.jit(jax.vmap(props.props_rhoT))(
-        jnp.asarray(out["rho"]), jnp.asarray(out["T"])
+    rho_out, T_out = jnp.asarray(out["rho"]), jnp.asarray(out["T"])
+    back = jax.jit(jax.vmap(props.props_rhoT))(rho_out, T_out)
+    sensitivity = jax.jit(jax.vmap(lambda r, t: state_sensitivity(props.eos, r, t)))(
+        rho_out, T_out
     )
     for var, wanted in asked.items():
-        worst = _worst_residual(back[var.internal_key], wanted, var.spec.scale, solved)
+        scale = np.maximum(var.spec.scale, np.asarray(sensitivity[var.internal_key]))
+        worst = _worst_residual(back[var.internal_key], wanted, scale, solved)
         assert worst < RESIDUAL.bound, (
             f"{var.value} does not come back: worst scaled residual {worst:.2e}"
         )

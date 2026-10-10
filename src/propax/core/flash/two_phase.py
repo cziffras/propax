@@ -11,9 +11,9 @@ from propax.utils.types import jaxBool
 
 from ...utils.numerics import pick
 from ..config import ThermoVar
-from ..domain import clamp_quality, is_two_phase
 from ..saturation import Superancillary
 from ..tolerances import TOL
+from .flash_utils import clamp_quality, is_a_root, is_two_phase
 from .results import as_mixed, get_sat_bounds
 
 
@@ -93,9 +93,14 @@ def solve_two_phase(
         known, other_tvar, other_val = _split(anchor, tvar1, val1, tvar2, val2)
         sat, in_range = _saturation_at(eos, saturation, anchor, known)
         L, V = get_sat_bounds(sat, other_tvar)
-        x = (as_mixed(other_tvar, other_val) - L) / (V - L)
-        is_valid_flag = in_range & is_two_phase(
-            x, sat.is_valid, slack=max(slack, TOL.acc.quality_slack)
+        y = as_mixed(other_tvar, other_val)
+        x = (y - L) / (V - L)
+        floor = 0.0 if other_tvar.spec.invert_for_mixing else other_tvar.spec.scale
+        margin_L = TOL.acc.quality_slack * jnp.maximum(jnp.abs(L), floor)
+        margin_V = TOL.acc.quality_slack * jnp.maximum(jnp.abs(V), floor)
+        on_line = (y >= L - margin_L) & (y <= V + margin_V)
+        is_valid_flag = in_range & (
+            is_two_phase(x, sat.is_valid, slack) | (sat.is_valid & on_line)
         )
         return is_valid_flag, sat.T, clamp_quality(x, slack)
 
@@ -144,6 +149,7 @@ def solve_two_phase(
         s_linear,
     )
 
+    # TODO : switch to newton_loop
     # well_posed=False (least-squares) for both the forward Newton and its
     # implicit adjoint: it tolerates a singular Jacobian so a
     # lane fails to converge instead of raising, and so the reverse-mode
@@ -171,9 +177,6 @@ def solve_two_phase(
     # `linear` is then what has to come back, ignore the solver's flag
     L_lin_f, V_lin_f = get_sat_bounds(sat_final, linear)
     lin_rebuilt = L_lin_f + x_final * (V_lin_f - L_lin_f)
-    reproduces_linear = (
-        jnp.abs(lin_rebuilt - linear_norm) / s_linear <= TOL.acc.root_atol
-    )
 
     in_solver_range = (T_final >= eos.T_triple) & (T_final < saturation.T_crit)
     is_biphasic_flag = (
@@ -182,7 +185,7 @@ def solve_two_phase(
         & inputs_finite
         & in_solver_range
         & well_posed
-        & reproduces_linear
+        & is_a_root(lin_rebuilt, linear_norm, s_linear)
         & is_two_phase(x_final, jnp.asarray(True), slack=slack)
     )
     return is_biphasic_flag, T_final, clamp_quality(x_final, slack)

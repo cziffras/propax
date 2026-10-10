@@ -142,10 +142,10 @@ propax/
     config.py         ThermoVar, PhaseID, the table registry
     saturation.py     Superancillary: the fitted curve at runtime
     interp.py         BicubicInterpolation, ChebyshevPieces
-    domain.py         where the correlation is valid
     tolerances.py     every tolerance and iteration cap, in one place
     flash/
       dispatch.py     which route a pair takes, and which pairs are refused
+      flash_utils.py  where the correlation is valid, when a root is accepted
       single_phase.py the bracketed 1D solve and the nested one
       two_phase.py    the lever rule, and the three ways T_sat is found
       results.py      a solved state into the returned dict

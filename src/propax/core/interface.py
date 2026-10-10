@@ -23,9 +23,8 @@ from .flash import (
     call_interp,
     check_supported,
     fill_result_dict,
-    is_degenerate_pair,
-    is_saturated_pair,
     mixture_state,
+    route_of,
     supported_pairs,
 )
 from .flash.single_phase import solve_single_phase
@@ -447,7 +446,7 @@ class Interface(eqx.Module):
         # A quality read against P or T needs no solver at all: the saturation
         # state is the answer and the lever rule places the mixture on it, leaves
         # before any other machinery is built
-        if is_saturated_pair(tvar1, tvar2):
+        if route_of(tvar1, tvar2) == "saturated":
             ok, T_sat, x = solve_saturated(
                 self.eos, self.saturation, tvar1, val1, tvar2, val2
             )
@@ -455,7 +454,7 @@ class Interface(eqx.Module):
 
         # (P, T) admits no two-phase state, and `monophasic` forces the
         # single-phase solver (python static)
-        degenerate_pair = monophasic or is_degenerate_pair(tvar1, tvar2)
+        degenerate_pair = monophasic or {tvar1, tvar2} == {ThermoVar.P, ThermoVar.T}
         if degenerate_pair:
             is_biphasic, T_two_phase, x_two_phase = jnp.array(False), jnp.inf, jnp.inf
         else:

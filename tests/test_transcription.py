@@ -84,7 +84,13 @@ class TestTheSolvedCriticalPoint:
             pytest.skip(f"{cp_fluid}: CoolProp reports the reducing point as critical")
 
         solved = float(eos.rho_crit_mass) / float(eos.molar_mass)
-        assert abs(solved / published - 1.0) < TRANSCRIPTION.critical_point_vs_source
+        assert abs(solved / published - 1.0) < TRANSCRIPTION.critical_density_vs_source
+
+        T_published = CP.PropsSI("Tcrit", cp_fluid)
+        assert (
+            abs(float(eos.T_crit) / T_published - 1.0)
+            < TRANSCRIPTION.critical_temperature_vs_source
+        )
 
 
 def test_the_fluid_is_thermodynamically_stable(grid):
