@@ -2,6 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/propax.svg)](https://pypi.org/project/propax/)
 [![CI](https://github.com/cziffras/propax/actions/workflows/ci.yml/badge.svg)](https://github.com/cziffras/propax/actions/workflows/ci.yml)
+[![CAMPAIGN](https://github.com/cziffras/propax/actions/workflows/campaign.yml/badge.svg)](https://github.com/cziffras/propax/actions/workflows/campaign.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/cziffras/propax/blob/main/LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://github.com/cziffras/propax/blob/main/pyproject.toml)
 
