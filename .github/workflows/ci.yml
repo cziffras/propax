@@ -2,12 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 jobs:
-  static:
+  static: # precommit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

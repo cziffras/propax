@@ -7,8 +7,7 @@ import numpy as np
 import pytest
 
 from propax.core.config import ThermoVar
-
-from .conftest import SAMPLED
+from propax.fluids._registry import EQS_REGISTRY  # noqa: E402
 
 STATE_KEYS = {"P", "rho", "T", "u", "h", "s", "cv", "cp"}
 BRANCH_KEYS = {"rho", "h", "s", "u"}
@@ -42,7 +41,7 @@ def test_the_saturated_branches_carry_the_expected_keys(saturation, dome):
     assert set(state.V.keys()) == BRANCH_KEYS
 
 
-def test_out_of_domain_is_nan(props, eos, grid):
+def test_out_of_domain_is_nan(props, grid):
     T = float(grid.T[len(grid) // 2])
     for rho, t in ((-10.0, T), (0.0, T), (10.0, -5.0)):
         state = props.props_rhoT(jnp.asarray(rho), jnp.asarray(t))
@@ -72,10 +71,8 @@ def test_the_saturation_curve_vmaps(saturation, dome):
 def test_a_precision_switched_after_create_is_followed(x64):
     if not x64:
         pytest.skip("the subprocess picks its own precision, the float64 run covers it")
-    if not SAMPLED:
-        pytest.skip("no shipped fluid")
     run = subprocess.run(
-        [sys.executable, "-c", SWITCHED_AFTER_CREATE, SAMPLED[0]],
+        [sys.executable, "-c", SWITCHED_AFTER_CREATE, str(next(iter(EQS_REGISTRY)))],
         capture_output=True,
         text=True,
         timeout=900,

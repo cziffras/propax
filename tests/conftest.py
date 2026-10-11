@@ -40,49 +40,49 @@ from propax.fluids._registry import EQS_REGISTRY  # noqa: E402
 from . import grids  # noqa: E402
 from .tolerances import for_precision  # noqa: E402
 
-RUNNING_IN_CI = os.getenv("GITHUB_ACTIONS") == "true"
+# sample 5 fluids to run the tests locally, the CI uses a dedicated script running
+# all tests for all fluids with two different precision mode each
+SAMPLED = sorted(
+    list(
+        map(
+            lambda s: str(s),
+            np.random.default_rng(42).choice(
+                sorted(EQS_REGISTRY), size=min(5, len(EQS_REGISTRY)), replace=False
+            ),
+        )
+    )
+)
 
-SAMPLE = 5
-SEED = 42
-
-
-def _sample_fluids() -> list:
-    shipped = sorted(EQS_REGISTRY)
-    if not shipped:
-        return []
-
-    if (
-        not RUNNING_IN_CI
-    ):  # check all fluids in CI, not locally (might be both too long and costly)
-        n = min(SAMPLE, len(shipped))
-        drawn = np.random.default_rng(SEED).choice(shipped, size=n, replace=False)
-    else:
-        drawn = shipped
-    return sorted(str(name) for name in drawn)
-
-
-SAMPLED = _sample_fluids()
 TRANSCRIPTION, RIGHT_ROOT, RESIDUAL = for_precision(X64)
 
 
-def coolprop_name(propax_name: str) -> str:
-    from CoolProp.CoolProp import get_global_param_string
+def selected_fluids(config) -> list:
+    return config.getoption("--fluid") or SAMPLED
 
-    canonical = {
-        n.lower().replace(" ", ""): n
-        for n in get_global_param_string("fluids_list").split(",")
-    }
-    return canonical[propax_name.lower().replace(" ", "")]
+
+def pytest_addoption(parser):
+    parser.addoption("--fluid", action="append", default=None)
+
+
+def pytest_generate_tests(metafunc):
+    if "fluid_name" in metafunc.fixturenames:
+        metafunc.parametrize(
+            "fluid_name", selected_fluids(metafunc.config), scope="session"
+        )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--fluid"):
+        items[:] = [it for it in items if "fluid_name" in it.fixturenames]
+
+
+def pytest_report_header(config):
+    return f"propax: float{'64' if X64 else '32'}, currently testing {selected_fluids(config)}"
 
 
 @pytest.fixture(scope="session")
 def x64() -> bool:
     return X64
-
-
-@pytest.fixture(scope="session", params=SAMPLED)
-def fluid_name(request) -> str:
-    return request.param
 
 
 @pytest.fixture(scope="session")
@@ -112,8 +112,10 @@ def dome(saturation):
 
 @pytest.fixture(scope="session")
 def cp_fluid(fluid_name) -> str:
-    return coolprop_name(fluid_name)
+    from CoolProp.CoolProp import get_global_param_string
 
-
-def pytest_report_header(config):
-    return f"propax: float{'64' if X64 else '32'}, {len(SAMPLED)} fluid(s) sampled"
+    canonical = {
+        n.lower().replace(" ", ""): n
+        for n in get_global_param_string("fluids_list").split(",")
+    }
+    return canonical[fluid_name.lower().replace(" ", "")]

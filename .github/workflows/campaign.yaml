@@ -1,0 +1,50 @@
+name: campaign # the "ultimate" test
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      fluids: ${{ steps.list.outputs.fluids }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --python 3.13
+      - id: list
+        run: >
+          echo "fluids=$(uv run python -c 'import json;
+          from propax.fluids._registry import EQS_REGISTRY;
+          print(json.dumps(sorted(EQS_REGISTRY)))')" >> "$GITHUB_OUTPUT"
+
+  fluid:
+    needs: plan
+    name: ${{ matrix.fluid }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        fluid: ${{ fromJSON(needs.plan.outputs.fluids) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: {enable-cache: true}
+      - run: uv sync --python 3.13 --extra test --extra coolprop
+      - name: float64
+        run: PROPAX_TEST_X64=1 uv run --no-sync pytest -q -ra --fluid=${{ matrix.fluid }} --junitxml=report-64.xml
+      - name: float32
+        if: always()
+        run: PROPAX_TEST_X64=0 uv run --no-sync pytest -q -ra --fluid=${{ matrix.fluid }} --junitxml=report-32.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: "report-${{ matrix.fluid }}", path: "report-*.xml"}
