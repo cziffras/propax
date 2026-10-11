@@ -30,6 +30,8 @@ jobs:
   fluid:
     needs: plan
     name: ${{ matrix.fluid }}
+    env:
+      FLUID: ${{ matrix.fluid }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -42,10 +44,11 @@ jobs:
         with: {enable-cache: true}
       - run: uv sync --python 3.13 --extra test --extra coolprop
       - name: float64
-        run: PROPAX_TEST_X64=1 uv run --no-sync pytest -q -ra --fluid=${{ matrix.fluid }} --junitxml=report-64.xml
+      # FLUID is an env var so that bashes reads the command correctly and then replaces $FLUID with its value
+        run: PROPAX_TEST_X64=1 uv run --no-sync pytest -q -ra --fluid="$FLUID" --junitxml=report-64.xml
       - name: float32
         if: always()
-        run: PROPAX_TEST_X64=0 uv run --no-sync pytest -q -ra --fluid=${{ matrix.fluid }} --junitxml=report-32.xml
+        run: PROPAX_TEST_X64=0 uv run --no-sync pytest -q -ra --fluid="$FLUID" --junitxml=report-32.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with: {name: "report-${{ matrix.fluid }}", path: "report-*.xml"}
