@@ -41,6 +41,7 @@ class HelmholtzEOS(eqx.Module):
     residual_terms: tuple  # tuple[ResidualTerm, ...] -> alphar
 
     reference: str = eqx.field(static=True, default="")
+    pseudo_pure: bool = eqx.field(static=True, default=False)
 
     @classmethod
     def from_definition(cls, defn: HelmholtzEOSDefinition) -> "HelmholtzEOS":
@@ -117,6 +118,7 @@ class HelmholtzEOS(eqx.Module):
             ideal_terms=ideal_terms,
             residual_terms=residual_terms,
             reference=defn.reference,
+            pseudo_pure=defn.pseudo_pure,
         )
 
     @property

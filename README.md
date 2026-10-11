@@ -102,6 +102,12 @@ per fluid, so the catalogue is generated once on CI by
 Every converted fluid gives density, energies, `cp` and `cv`. 16 of them are also
 usable end to end, with viscosity and conductivity.
 
+R404A, R407C, R410A, R507A and SES36 are blends that CoolProp describes as
+pseudo-pure fluids (`eos.pseudo_pure`). propax treats them as pure fluids, so
+their two-phase region is the dome of the pseudo-pure EOS, with no temperature
+glide. CoolProp takes their bubble and dew lines from ancillary equations
+instead, so the two libraries disagree near and inside the dome.
+
 ### Blocked fluids
 
 Ten fluids are blocked by an EOS term family that is not implemented yet:

@@ -8,10 +8,42 @@ CP = pytest.importorskip(
 )
 
 from propax.core.config import ThermoVar  # noqa: E402
+from propax.core.flash.flash_utils import state_sensitivity  # noqa: E402
 
 from .conftest import RESIDUAL, RIGHT_ROOT  # noqa: E402
 
 LIQUID, VAPOUR = 0, 1
+
+
+def _equilibrium_gap(eos, rho_L, rho_V, T):
+    def ln_fugacity(rho_mass, t):
+        rho_mol = rho_mass / eos.molar_mass
+        delta = rho_mol / eos.rho_red_mol
+        ar, ar_d = jax.value_and_grad(eos.alphar, argnums=0)(delta, eos.T_red / t)
+        return ar + delta * ar_d + jnp.log(rho_mol * eos.R_u * t)
+
+    gap = jnp.abs(ln_fugacity(rho_L, T) - ln_fugacity(rho_V, T))
+    sensitivity = state_sensitivity(ln_fugacity, rho_L, T) + state_sensitivity(
+        ln_fugacity, rho_V, T
+    )
+    return gap / jnp.maximum(1.0, sensitivity)
+
+
+def _coolprop_dome(eos, dome, cp_fluid):
+    T = np.asarray(dome)
+    rho = {
+        q: CP.PropsSI("D", "T", T, "Q", np.full_like(T, q), cp_fluid)
+        for q in (LIQUID, VAPOUR)
+    }
+    gap = jax.jit(jax.vmap(lambda a, b, t: _equilibrium_gap(eos, a, b, t)))(
+        rho[LIQUID], rho[VAPOUR], dome
+    )
+    trusted = np.asarray(gap) < RESIDUAL.equal_fugacity
+    assert trusted.mean() >= RIGHT_ROOT.oracle_fraction, (
+        f"CoolProp's dome is in equilibrium on only {trusted.mean()} of "
+        f"{T.size} temperatures"
+    )
+    return T, rho, trusted
 
 
 class TestTheCurveIsConsistentWithItself:
@@ -34,15 +66,9 @@ class TestTheCurveIsConsistentWithItself:
     def test_the_two_branches_are_in_equilibrium(self, eos, saturation, dome):
         """Equal fugacity is the fit criterion, check it."""
 
-        def ln_fugacity(rho_mass, t):
-            rho_mol = rho_mass / eos.molar_mass
-            delta = rho_mol / eos.rho_red_mol
-            ar, ar_d = jax.value_and_grad(eos.alphar, argnums=0)(delta, eos.T_red / t)
-            return ar + delta * ar_d + jnp.log(rho_mol * eos.R_u * t)
-
         def gap(t):
             rho_L, rho_V = saturation.densities(t)
-            return jnp.abs(ln_fugacity(rho_L, t) - ln_fugacity(rho_V, t))
+            return _equilibrium_gap(eos, rho_L, rho_V, t)
 
         worst = float(jnp.max(jax.jit(jax.vmap(gap))(dome)))
         assert worst < RESIDUAL.equal_fugacity
@@ -57,19 +83,30 @@ class TestTheCurveIsConsistentWithItself:
 
 
 class TestTheCurveIsTheSameOneCoolPropFound:
-    def test_the_saturated_densities_agree(self, saturation, dome, cp_fluid):
-        T = np.asarray(dome)
+    @pytest.fixture(autouse=True)
+    def _not_pseudo_pure(self, eos, cp_fluid):
+        if eos.pseudo_pure:
+            pytest.skip(
+                f"{cp_fluid} is pseudo-pure: CoolProp takes its bubble and dew "
+                "lines from ancillaries, not from the EOS"
+            )
+
+    def test_the_saturated_densities_agree(self, eos, saturation, dome, cp_fluid):
+        _, ref, trusted = _coolprop_dome(eos, dome, cp_fluid)
         rho = dict(zip((LIQUID, VAPOUR), jax.vmap(saturation.densities)(dome)))
         for q, got in rho.items():
-            ref = CP.PropsSI("D", "T", T, "Q", np.full_like(T, q), cp_fluid)
-            assert np.asarray(got) == pytest.approx(ref, rel=RIGHT_ROOT.density)
+            assert np.asarray(got)[trusted] == pytest.approx(
+                ref[q][trusted], rel=RIGHT_ROOT.density
+            )
 
-    def test_the_branch_energies_agree(self, saturation, dome, cp_fluid):
-        T = np.asarray(dome)
+    def test_the_branch_energies_agree(self, eos, saturation, dome, cp_fluid):
+        T, _, trusted = _coolprop_dome(eos, dome, cp_fluid)
         state = jax.jit(jax.vmap(saturation.state_T))(dome)
         for var in (ThermoVar.H, ThermoVar.S):
             for branch, q in ((state.L, LIQUID), (state.V, VAPOUR)):
                 ref = CP.PropsSI(var.value, "T", T, "Q", np.full_like(T, q), cp_fluid)
-                assert np.asarray(branch[var]) == pytest.approx(
-                    ref, rel=RIGHT_ROOT.energy, abs=RIGHT_ROOT.energy * var.spec.scale
+                assert np.asarray(branch[var])[trusted] == pytest.approx(
+                    ref[trusted],
+                    rel=RIGHT_ROOT.energy,
+                    abs=RIGHT_ROOT.energy * var.spec.scale,
                 )

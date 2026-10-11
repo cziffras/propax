@@ -145,6 +145,7 @@ class HelmholtzEOSDefinition(BaseModel):
     P_triple: float
     T_max: Optional[float] = None  # K
     P_max: float  # Pa
+    pseudo_pure: bool = False
     ideal: IdealHelmholtz
     residual: ResidualHelmholtz
     superancillary: Optional[SaturationSuperancillary] = None

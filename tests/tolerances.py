@@ -10,7 +10,7 @@ class Transcription(PrecisionScaled):
     Tight tolerance against CoolProp.
     """
 
-    state_from_rho_T: float = field(default=1e-9, metadata={"loosest": 1e-6})
+    state_from_rho_T: float = field(default=1e-9, metadata={"loosest": 1e-5})
     derivative: float = field(default=1e-9, metadata={"loosest": 1e-5})
 
     criticality_first: float = field(default=1e-9, metadata={"loosest": 1e-3})

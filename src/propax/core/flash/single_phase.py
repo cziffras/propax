@@ -117,7 +117,7 @@ def solve_1d(
     rho_final, T_final = as_rho_T(x_final, known_safe)
 
     props = eos.props_rhoT(rho_final, T_final)
-    sensitivity = state_sensitivity(eos, rho_final, T_final)
+    sensitivity = state_sensitivity(eos.props_rhoT, rho_final, T_final)
     op_status = (
         inputs_finite
         & is_a_root(props[key], target_safe, jnp.maximum(scale, sensitivity[key]))
@@ -248,8 +248,7 @@ def solve_nested(
     rho_sol = _density_at_TP(eos, saturation, T_sol, P, seed=rho_prev)
 
     props = eos.props_rhoT(rho_sol, T_sol)
-    sensitivity = state_sensitivity(eos, rho_sol, T_sol)
-    #
+    sensitivity = state_sensitivity(eos.props_rhoT, rho_sol, T_sol)
     P_scale = jnp.maximum(ThermoVar.P.spec.scale, sensitivity[ThermoVar.P])
     op_status = (
         is_a_root(props[ThermoVar.P], P, P_scale)

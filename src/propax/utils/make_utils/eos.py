@@ -230,5 +230,6 @@ def convert_eos(cp: dict, cp_name: str) -> tuple[dict, dict, dict]:
         # stated upper validity of the EOS
         T_max=eos["T_max"],
         P_max=eos["p_max"],
+        pseudo_pure=eos.get("pseudo_pure", False),
     )
     return consts, ideal_acc, residual

@@ -78,9 +78,9 @@ def test_the_flash_zeroes_its_residual(props, grid, pair):
 
     rho_out, T_out = jnp.asarray(out["rho"]), jnp.asarray(out["T"])
     back = jax.jit(jax.vmap(props.props_rhoT))(rho_out, T_out)
-    sensitivity = jax.jit(jax.vmap(lambda r, t: state_sensitivity(props.eos, r, t)))(
-        rho_out, T_out
-    )
+    sensitivity = jax.jit(
+        jax.vmap(lambda r, t: state_sensitivity(props.eos.props_rhoT, r, t))
+    )(rho_out, T_out)
     for var, wanted in asked.items():
         scale = np.maximum(var.spec.scale, np.asarray(sensitivity[var.internal_key]))
         worst = _worst_residual(back[var.internal_key], wanted, scale, solved)

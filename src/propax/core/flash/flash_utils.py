@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Callable, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -21,11 +21,11 @@ def node_is_valid(saturation, rho, T):
     return (rho > 0.0) & (rho <= saturation.rho_max) & (T > T_lo) & (T < T_hi)
 
 
-def state_sensitivity(eos: HelmholtzEOS, rho, T):
+def state_sensitivity(of_rho_T: Callable, rho, T):
     rho = jax.lax.stop_gradient(jnp.asarray(rho))
     T = jax.lax.stop_gradient(jnp.asarray(T))
-    _, along_rho = jax.jvp(lambda r: eos.props_rhoT(r, T), (rho,), (rho,))
-    _, along_T = jax.jvp(lambda t: eos.props_rhoT(rho, t), (T,), (T,))
+    _, along_rho = jax.jvp(lambda r: of_rho_T(r, T), (rho,), (rho,))
+    _, along_T = jax.jvp(lambda t: of_rho_T(rho, t), (T,), (T,))
     return jax.tree.map(lambda a, b: jnp.abs(a) + jnp.abs(b), along_rho, along_T)
 
 

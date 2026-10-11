@@ -2,7 +2,10 @@ import jax
 import numpy as np
 import pytest
 
-from .conftest import RIGHT_ROOT
+from propax.core.config import ThermoVar
+from propax.core.flash.flash_utils import state_sensitivity
+
+from .conftest import RESIDUAL, RIGHT_ROOT
 
 CP = pytest.importorskip(
     "CoolProp.CoolProp", reason="CoolProp only serves as a reference oracle"
@@ -56,8 +59,19 @@ class TestTheFlashLandsOnTheRightRoot:
         D_cp = CP.PropsSI("D", "P", state["P"], "H", state["h"], cp_fluid)
 
         oracle = np.isfinite(T_cp) & np.isfinite(D_cp) & (T_cp > 0) & (D_cp > 0)
+        back = jax.jit(jax.vmap(props.props_rhoT))(D_cp, T_cp)
+        sensitivity = jax.jit(
+            jax.vmap(lambda r, t: state_sensitivity(props.eos.props_rhoT, r, t))
+        )(D_cp, T_cp)
+        for var, wanted in ((ThermoVar.P, state["P"]), (ThermoVar.H, state["h"])):
+            key = var.internal_key
+            scale = np.maximum(var.spec.scale, np.asarray(sensitivity[key]))
+            oracle &= np.abs(np.asarray(back[key]) - wanted) <= RESIDUAL.bound * (
+                np.maximum(scale, np.abs(wanted))
+            )
         assert oracle.mean() >= RIGHT_ROOT.oracle_fraction, (
-            f"CoolProp answered on only {oracle.mean():.1%} of the solved states"
+            f"CoolProp reproduced its inputs on only {oracle.mean():.1%} of the "
+            "solved states"
         )
 
         T_px = np.asarray(out["T"])[solved]
