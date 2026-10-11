@@ -8,7 +8,7 @@ permissions: {contents: read}
 
 jobs:
   campaign:
-    uses: ./.github/workflows/campaign.yaml
+    uses: ./.github/workflows/campaign.yml
 
   build:
     needs: campaign
