@@ -13,10 +13,6 @@ dev = [
   "ruff==0.15.20",
   "toml-sort>=0.24"
 ]
-docs = [
-  "mkdocs-material>=9.5",
-  "mkdocstrings[python]>=0.27"
-]
 
 [project]
 authors = [{name = "Emmanuel Benichou"}]
@@ -60,6 +56,7 @@ notebooks = [
 ]
 test = [
   "pytest",
+  "pytest-github-actions-annotate-failures",
   "coolprop>=6.6.0"
 ]
 

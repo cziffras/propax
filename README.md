@@ -10,32 +10,32 @@
   <img src="https://raw.githubusercontent.com/cziffras/propax/main/imgs/cp_propax.png" alt="illustration" width="400">
 </p>
 
-`propax` is a CoolProp-like fluid properties library written in pure JAX. It is
+`propax` is a CoolProp-like fluid properties library (for pure fluids only) written in pure JAX. It is
 differentiable, jittable and vmappable, runs on CPU and GPU in both 32 and 64 bit
 precision, and never calls back to Python through `pure_callback`.
 
-
 ## Install
 
-propax is available on pypi, simply run :
+propax is available on PyPI, simply run:
 
 ```
 pip install propax
 ```
 
-CoolProp and mpmath are development extras only, also used to transcribe new fluids :
+CoolProp and mpmath are development extras only, also used to transcribe new fluids:
 
 ```
-pip install "propax[coolprop]"  
+pip install "propax[coolprop]"
 ```
 
 ## Usage
 
 ```python
 import jax
-jax.config.update("jax_enable_x64", True)  # True or False, depending on your needs (GPU are often faster with 32bits precision)
+jax.config.update("jax_enable_x64", True)  # True or False, depending on your needs (GPUs are often faster with 32-bit precision)
 from propax import Interface
 
+Interface.available_fluids()  # ['1-butene', 'acetone', 'argon', ...]
 props = Interface.create("n-propane")
 
 # accurate: a bracketed solve with phase detection (see supported pairs)
@@ -53,7 +53,7 @@ dT_dP = jax.grad(lambda p: props.flash("P", p, "H", 3e5)[0]["T"])(2e5)
 
 Plain floats work without triggering a recompile, so `propax` can be used like
 CoolProp by people who are not used to JAX. It composes with `jax.jit`, `jax.vmap` and
-`jax.grad` as usual for JAX enjoyers !
+`jax.grad` as usual for JAX enjoyers!
 
 Two conventions to know:
 
@@ -66,7 +66,7 @@ Two conventions to know:
 
 CoolProp is used at development time only: to transcribe fluids, and as a coarse oracle
 in the tests (sometimes `CoolProp` and `propax` do not operate at the same precision level which
-often favors propax). 
+often favors propax).
 
 Other projects, such as [jaxprop](https://github.com/turbo-sim/jaxprop), wrap
 CoolProp and expose it through `jax.pure_callback()`. This makes CoolProp callable
@@ -74,7 +74,7 @@ from JAX code, but has mainly three drawbacks:
 
 - the calls still run on CPU, which rules out GPU or TPU execution;
 - every call pays for array conversion and host/device transfers;
-- the computation graph is split between conversion, XLA optimization cannot
+- the computation graph is split at each conversion, so XLA optimization cannot
   be optimal.
 
 Interpolating CoolProp tables in JAX would avoid the callback, but costs a lot of
@@ -96,8 +96,8 @@ The offline machinery can be found in `src/propax/utils/exact/`.
 ## Fluid catalogue
 
 125 of CoolProp's 136 pure fluids can be converted. The saturation fit takes minutes
-per fluid, so the catalogue is generated once on CI by
-`.github/workflows/catalogue.yml` and committed, rather than rebuilt by every user.
+per fluid, so the catalogue is generated on CI by `.github/workflows/catalogue.yml`. In practice,
+`propax` comes with all its available fluids when installed (same as `CoolProp`).
 
 Every converted fluid gives density, energies, `cp` and `cv`. 16 of them are also
 usable end to end, with viscosity and conductivity.
@@ -124,7 +124,7 @@ Ten fluids are blocked by an EOS term family that is not implemented yet:
 
 ### Transport coverage
 
-Transport is the less complete part. These families are not supported yet, as
+Transport is the least complete part. These families are not supported yet, as
 checked against the `model`/`type` tags in
 [CoolProp's fluid definition files](https://github.com/CoolProp/CoolProp/tree/master/dev/fluids):
 
@@ -139,21 +139,6 @@ Cubic EOS (SRK, Peng–Robinson) and PC-SAFT are not supported either
 ([Soave 1972](https://doi.org/10.1016/0009-2509(72)80096-4);
 [Peng & Robinson 1976](https://doi.org/10.1021/i160057a011);
 [Gross & Sadowski 2001](https://doi.org/10.1021/ie0003887)).
-
-### Making a fluid
-
-```
-pip install "propax[coolprop]"
-python scripts/make_fluid.py Argon # transcribe the EOS, then fit its saturation curve (check for options with --help)
-python scripts/make_fluid.py --list-convertible [e|v|c]
-```
-
-This is useful to check or change a shipped fluid, or to add one CoolProp gains
-after a release.
-
-A correlation it cannot reproduce from published coefficients can be implemented with `--transport-scaffold` : each slot
-CoolProp hardcodes gets a placeholder and its literature reference, ready to be
-implemented.
 
 ## Interpolation tables
 
@@ -170,22 +155,19 @@ tables.create_all_tables(
     "n-propane",
     pairs=[("P", "H"), ("D", "U")],
     bounds={"P": (1e4, 5e6), "H": (-3e5, 1.5e6), "D": (3.5, 717), "U": (-2.3e5, 1.4e6)},
+    target=1e-5
 )
-tables.cached_fluids() 
-tables.clear_cache(["argon"])                               
-tables.clear_cache()     
+tables.cached_fluids()
+tables.clear_cache(["argon"])
+tables.clear_cache()
 ```
 
-- **Coverage:** only the pairs you ask for, over the bounds you give for each of
-  their variables. Outside them `fast_flash` returns NaN; inside, next to
-  states the solvers cannot reach, its values are extrapolated. Its second
-  output is False in both cases.
-- **Size:** a few hundred MB per fluid, which is why tables are built on demand
-  rather than shipped.
-- **Location:** `~/.cache/propax/<fluid>/`, or anywhere with `PROPAX_TABLE_DIR`.
-- **Precision:** `target` (1e-5 by default) adapts the grids to the lightest ones
-  meeting that tolerance. Tables are designed for float32-level tolerances
-  (~1e-5 to ~1e-7 rtol). When you need more, use `flash`, which needs no table.
+The second output of `fast_flash` is False off the tables' axes, where the
+properties come back NaN, and next to nodes the build could not solve (near the
+critical point, at the edges of the domain), where they are extrapolated.
+
+- **Location:** They are sent to `~/.cache/propax/<fluid>/`, or anywhere with `PROPAX_TABLE_DIR`.
+- **Precision:** `target` (1e-5 by default) adapts the grids to the lightest ones meeting that tolerance. Tables are designed for float32-level tolerances. When you need more, use `flash`, which needs no table.
 
 ## Performance
 
@@ -210,6 +192,21 @@ PROPAX_TEST_X64=0 uv run pytest      # float32
 
 The CoolProp-based tests are skipped when CoolProp is not installed.
 
+### Making a fluid
+
+```
+pip install "propax[coolprop]"
+python scripts/make_fluid.py Argon # transcribe the EOS, then fit its saturation curve (check for options with --help)
+python scripts/make_fluid.py --list-convertible [e|v|c]
+```
+
+This is useful to check or change a shipped fluid, or to add one CoolProp gains
+after a release.
+
+A correlation it cannot reproduce from published coefficients can be implemented with `--transport-scaffold`: each slot
+CoolProp hardcodes gets a placeholder and its literature reference, ready to be
+implemented.
+
 ## Roadmap
 
 ### Extended corresponding states
@@ -217,15 +214,6 @@ The CoolProp-based tests are skipped when CoolProp is not installed.
 The coefficients are published and the reference fluids are already exact here.
 ECS is what separates 16 fluids usable end to end from most of the refrigerant
 catalogue, so it comes first.
-
-### Mixtures
-
-The next big extension is the standard multi-fluid Helmholtz mixture model of
-[GERG-2008 (Kunz & Wagner 2012)](https://doi.org/10.1021/je300655b), the
-formulation used by REFPROP and
-[CoolProp's mixture backend](https://coolprop.org/fluid_properties/Mixtures.html#theoretical-description).
-It builds on the existing pure-fluid equations, adding reducing functions and
-binary departure terms. The first version will support the (T, P) flash only.
 
 ## License
 

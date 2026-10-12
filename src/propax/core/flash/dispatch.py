@@ -29,6 +29,7 @@ ROUTES: Dict[FrozenSet[ThermoVar], str] = {
     frozenset({ThermoVar.D, ThermoVar.U}): "one_dim",
     frozenset({ThermoVar.D, ThermoVar.H}): "one_dim",
     frozenset({ThermoVar.D, ThermoVar.S}): "one_dim",
+    frozenset({ThermoVar.D, ThermoVar.P}): "one_dim",
     frozenset({ThermoVar.T, ThermoVar.P}): "one_dim",
     frozenset({ThermoVar.T, ThermoVar.S}): "one_dim",
     frozenset({ThermoVar.P, ThermoVar.H}): "nested",
@@ -65,11 +66,6 @@ INVALID_PAIRS = {
     ),
     frozenset({ThermoVar.S, ThermoVar.U}): (
         "two caloric variables, as (H, S); CoolProp declines it too"
-    ),
-    frozenset({ThermoVar.P, ThermoVar.D}): (
-        "no bracket exists in either ordering: drho/dT|_P = -rho alpha and "
-        "dP/dT|_rho = alpha / kappa_T both carry the sign of the thermal "
-        "expansion coefficient, which is unconstrained"
     ),
 }
 

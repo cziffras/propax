@@ -68,7 +68,7 @@ _SPECS: Mapping[ThermoVar, VarSpec] = MappingProxyType(
             sat_key_V="h_V",
             linear_in_x=True,
             scale=1e5,
-            unit="J.kg",
+            unit="J/kg",
         ),
         ThermoVar.S: VarSpec(
             "s",
@@ -84,7 +84,7 @@ _SPECS: Mapping[ThermoVar, VarSpec] = MappingProxyType(
             sat_key_V="u_V",
             linear_in_x=True,
             scale=1e5,
-            unit="J.kg",
+            unit="J/kg",
         ),
         ThermoVar.D: VarSpec(
             "rho",
@@ -95,9 +95,9 @@ _SPECS: Mapping[ThermoVar, VarSpec] = MappingProxyType(
             unit="kg/m3",
         ),
         ThermoVar.Q: VarSpec("x"),
-        ThermoVar.CVMASS: VarSpec("cv", can_be_input=False, unit="J/(K.kg)"),
-        ThermoVar.CPMASS: VarSpec("cp", can_be_input=False, unit="J/(K.kg)"),
-        ThermoVar.VISCOSITY: VarSpec("viscosity", can_be_input=False, unit="Pa/s"),
+        ThermoVar.CVMASS: VarSpec("cv", can_be_input=False, unit="J/(kg.K)"),
+        ThermoVar.CPMASS: VarSpec("cp", can_be_input=False, unit="J/(kg.K)"),
+        ThermoVar.VISCOSITY: VarSpec("viscosity", can_be_input=False, unit="Pa.s"),
         ThermoVar.CONDUCTIVITY: VarSpec(
             "conductivity", can_be_input=False, unit="W/(m.K)"
         ),
@@ -169,6 +169,7 @@ TABLE_REGISTRY: List[TableSpec] = [
     _table(_PRESSURE, _ENERGY),
     _table(_DENSITY, _ENTHALPY),
     _table(_DENSITY, _ENTROPY),
+    _table(_DENSITY, _PRESSURE),
     _table(_TEMPERATURE, _ENTROPY),
 ]
 

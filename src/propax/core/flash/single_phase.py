@@ -98,13 +98,16 @@ def solve_1d(
             slope = props[ThermoVar.CVMASS] / T
         elif key == ThermoVar.H.internal_key:
             slope = props[ThermoVar.CVMASS] + derivs["dP_dT"] / rho
+        elif key == ThermoVar.P.internal_key:
+            slope = derivs["dP_dT"]
         else:
             raise KeyError(f"Key {key} is not 1d bracketable. ")
 
         return pick(jnp.isfinite(f), f, _OUT_OF_DOMAIN), slope / scale, carry
 
-    x_final, _ = newton_loop(
-        (known_safe, target_safe),
+    params = (known_safe, target_safe)
+    x_final, _, (f_lo, f_hi) = newton_loop(
+        params,
         consts=eos,
         carry=None,
         residual=residual,
@@ -116,11 +119,15 @@ def solve_1d(
     )
     rho_final, T_final = as_rho_T(x_final, known_safe)
 
+    slope_at_root = residual(x_final, eos, params, None)[1]
+
     props = eos.props_rhoT(rho_final, T_final)
     sensitivity = state_sensitivity(eos.props_rhoT, rho_final, T_final)
     op_status = (
         inputs_finite
         & is_a_root(props[key], target_safe, jnp.maximum(scale, sensitivity[key]))
+        & (f_lo * f_hi <= 0.0)
+        & (slope_at_root * (f_hi - f_lo) >= 0.0)
         & node_is_valid(saturation, rho_final, T_final)
         & jnp.logical_not(is_inactive)
     )
@@ -158,7 +165,7 @@ def _density_at_TP(
             carry,
         )
 
-    rho, _ = newton_loop(
+    rho, _, _ = newton_loop(
         (T, P),
         consts=eos,
         carry=None,
@@ -234,7 +241,7 @@ def solve_nested(
     rho_min, _ = rho_bounds(saturation)
     rho_guess = pick(rho_branch > rho_min, rho_branch, P / (eos.R_spec * T0))
 
-    T_sol, rho_prev = newton_loop(
+    T_sol, rho_prev, _ = newton_loop(
         (P, y),
         consts=(eos, saturation),
         carry=rho_guess,

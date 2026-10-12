@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 import equinox as eqx
 import jax
@@ -72,6 +72,10 @@ class Interface(eqx.Module):
             tuple(sorted(v.value for v in pair)): route  # type: ignore[misc]
             for pair, route in supported_pairs().items()
         }
+
+    @classmethod
+    def available_fluids(cls) -> List[str]:
+        return sorted(EQS_REGISTRY)
 
     @classmethod
     def create(

@@ -57,7 +57,7 @@ def _newton_loop(params, *, consts, carry, residual, lower, upper, x0, max_steps
     # an endpoint that already is the root needs no iteration, and the loop
     # above cannot converge onto it: nothing tells it to move that way
     x = pick(f_lo == 0.0, lower, pick(f_hi == 0.0, upper, x))
-    return x, carry
+    return x, carry, (f_lo, f_hi)
 
 
 @_newton_loop.def_jvp
@@ -75,7 +75,7 @@ def _newton_loop_jvp(
     nondiff, diff = eqx.partition(params, no_tangent, is_leaf=_is_none)
     diff_dot = eqx.filter(params_dot, no_tangent, is_leaf=_is_none, inverse=True)
 
-    x, carry = _newton_loop(
+    x, carry, ends = _newton_loop(
         params,
         consts=consts,
         carry=carry,
@@ -95,7 +95,7 @@ def _newton_loop_jvp(
     )
     carry_dot = jax.tree.map(jnp.zeros_like, carry)
     # dx = -(dres/dparams . dparams) / (dres/dx)
-    return (x, carry), (-safe_div(f_dot, dfdx), carry_dot)
+    return (x, carry, ends), (-safe_div(f_dot, dfdx), carry_dot, (None, None))
 
 
 def newton_loop(params, *, consts, carry, residual, lower, upper, x0, max_steps, rtol):

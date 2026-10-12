@@ -173,7 +173,7 @@ def _abscissa_of(channel: ChebyshevPieces, component, value):
     # a lane the channel does not reach is handed the value at its seed,
     # so it stops at once instead of running every step of the batch
     aim = pick(in_range, held, stored(seed))
-    x, _ = newton_loop(
+    x, _, _ = newton_loop(
         aim,
         consts=(channel, component),
         carry=None,

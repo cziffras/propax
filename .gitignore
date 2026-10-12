@@ -50,7 +50,6 @@ uv.lock
 .pypirc
 **/__marimo__/
 tables/
-site/
 .vscode
 
 # work in progress
@@ -60,3 +59,4 @@ docs/superancillary.md
 docs/transport.md
 docs/flash.md
 docs/mixtures.md
+docs/cfd.md

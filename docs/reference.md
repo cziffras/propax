@@ -42,7 +42,7 @@ the lookup rests on solved nodes only.
 
 ### Which pairs work
 
-Eleven of the twenty-one input pairs, each answered by one of four routes.
+Twelve of the twenty-one input pairs, each answered by one of four routes.
 `supported_pairs()` returns exactly this mapping, read off the same tables the
 dispatch branches on:
 
@@ -50,14 +50,18 @@ dispatch branches on:
 |---|---|---|
 | `natural` | `(D,T)` | no solve: it is the state already |
 | `saturated` | `(P,Q)` `(T,Q)` | read off the saturation curve, lever rule |
-| `one_dim` | `(D,U)` `(D,H)` `(D,S)` `(T,P)` `(T,S)` | one bracketed solve for whichever of `D`/`T` is missing |
+| `one_dim` | `(D,U)` `(D,H)` `(D,S)` `(D,P)` `(T,P)` `(T,S)` | one bracketed solve for whichever of `D`/`T` is missing |
 | `nested` | `(P,H)` `(P,S)` `(P,U)` | a bracket on `T` enclosing one on density |
 
-The other ten are refused with their reason, in `flash.dispatch.INVALID_PAIRS`:
+The other nine are refused with their reason, in `flash.dispatch.INVALID_PAIRS`:
 `(H,S)` and `(S,U)` are two caloric variables with an ill-conditioned Jacobian,
-`(T,H)` and `(T,U)` are not injective in density, `(P,D)` has no bracket in
-either ordering. [flash.md](flash.md) proves the monotonicity each bracket
-relies on.
+`(T,H)` and `(T,U)` are not injective in density. [flash.md](flash.md) proves
+the monotonicity each bracket relies on.
+
+`(D,P)`, `(D,H)` and `(T,S)` rely on the sign of the thermal expansion
+coefficient. Where it is negative, in a liquid near its density maximum (heavy
+water around 280 K), two states can share the same pair and the flash returns
+one of them.
 
 ## The saturation curve
 

@@ -24,8 +24,8 @@ jobs:
       - id: list
         run: >
           echo "fluids=$(uv run python -c 'import json;
-          from propax.fluids._registry import EQS_REGISTRY;
-          print(json.dumps(sorted(EQS_REGISTRY)))')" >> "$GITHUB_OUTPUT"
+          from propax import Interface;
+          print(json.dumps(Interface.available_fluids()))')" >> "$GITHUB_OUTPUT"
 
   fluid:
     needs: plan
