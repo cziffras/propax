@@ -9,6 +9,7 @@ CP = pytest.importorskip(
 
 from propax.core.config import ThermoVar  # noqa: E402
 from propax.core.flash.flash_utils import state_sensitivity  # noqa: E402
+from propax.core.tolerances import TOL  # noqa: E402
 
 from .conftest import RESIDUAL, RIGHT_ROOT  # noqa: E402
 
@@ -105,8 +106,13 @@ class TestTheCurveIsTheSameOneCoolPropFound:
         for var in (ThermoVar.H, ThermoVar.S):
             for branch, q in ((state.L, LIQUID), (state.V, VAPOUR)):
                 ref = CP.PropsSI(var.value, "T", T, "Q", np.full_like(T, q), cp_fluid)
-                assert np.asarray(branch[var])[trusted] == pytest.approx(
-                    ref[trusted],
-                    rel=RIGHT_ROOT.energy,
-                    abs=RIGHT_ROOT.energy * var.spec.scale,
+                noise = jax.jit(jax.vmap(eos.noise_rhoT))(branch[ThermoVar.D], dome)
+                allowed = np.maximum(
+                    RIGHT_ROOT.energy * np.abs(ref),
+                    RIGHT_ROOT.energy * var.spec.scale,
+                ) + TOL.acc.evaluation_noise * np.asarray(noise[var])
+                gap = np.abs(np.asarray(branch[var]) - ref)
+                assert (gap <= allowed)[trusted].all(), (
+                    f"{var.value}, branch {q}: worst gap over allowance "
+                    f"{np.max((gap / allowed)[trusted]):.2f}"
                 )

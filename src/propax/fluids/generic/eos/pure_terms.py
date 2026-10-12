@@ -4,6 +4,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
+
+MAX_UNROLL = 32
 
 
 def int_pow(x, k: int):
@@ -24,9 +27,6 @@ def int_pow(x, k: int):
     return r
 
 
-MAX_UNROLL = 32
-
-
 def static_pow(x, e):
     if isinstance(e, int) or (float(e).is_integer() and abs(e) <= MAX_UNROLL):
         return int_pow(x, int(e))
@@ -45,6 +45,40 @@ def static_exponents(values) -> tuple:
 
 
 def _from_log_derivatives(base, delta, tau, d, t, L_d, dL_d, L_t, dL_t):
+    """(docstring edited with latex-input V2.3.0)
+
+    All available EOS families of terms write as :
+
+        f(δ, τ) = n · δ^d · τ^t · exp(g(δ) + k(τ))
+
+    Each family merely consists in a choice of k and g. Taking the logarithm this
+    becomes :
+
+        ln|f(δ, τ)| = ln|n| + d·ln|δ| + t·ln|τ| + g(δ) + k(τ)
+
+    And now, note that : ∂ln|f| = f′/f, so all partial
+    derivatives wrt τ of δ can be computed by simply multiplying the forward
+    computation f.
+
+    Finally :
+
+        p_d = ∂ln|f|/∂δ = d/δ + L_d
+
+    And a similar computation for τ.
+
+    All derivatives are then naturally retrieved explicitely, this method thus returns :
+
+    ```python
+    tuple(
+        ∂f/∂δ
+        ∂f/∂τ
+        ∂²f/∂δ²
+        ∂²f/∂τ²
+        ∂²f/∂δ∂τ
+    )
+    ```
+    """
+
     p_d = d / delta + L_d
     p_t = t / tau + L_t
     return (
@@ -57,7 +91,16 @@ def _from_log_derivatives(base, delta, tau, d, t, L_d, dL_d, L_t, dL_t):
     )
 
 
-def _by_autodiff(f, delta, tau):
+def _magnitudes(base, delta, tau, d, t, L_d, L_t):
+    size = jnp.abs(base)
+    return (
+        size,
+        size * (abs(d) / delta + jnp.abs(L_d)),
+        size * (abs(t) / tau + jnp.abs(L_t)),
+    )
+
+
+def _by_autodiff(f, delta, tau) -> Tuple[Array, ...]:
     x = jnp.stack([delta, tau])
 
     def g(z):
@@ -73,6 +116,11 @@ class IdealTerm(eqx.Module):
     alpha0(delta, tau). Subclasses implement `contribution`.
 
     /!\\ Read eos.md
+
+    All variables computed in HelmholtzEOS.props_rhoT use first order derivatives
+    of both Ideal and Residual terms. tau_derivatives returns these derivatives'
+    values along with their scale used to estimate the numerical noise due to
+    downstream computations.
     """
 
     def contribution(self, delta, tau):
@@ -80,7 +128,7 @@ class IdealTerm(eqx.Module):
 
     def tau_derivatives(self, delta, tau) -> Tuple:
         a, _, a_t, _, a_tt, _ = _by_autodiff(self.contribution, delta, tau)
-        return a, a_t, a_tt
+        return (a, a_t, a_tt), (jnp.abs(a), jnp.abs(a_t))
 
 
 class ResidualTerm(eqx.Module):
@@ -90,13 +138,19 @@ class ResidualTerm(eqx.Module):
     alphar(delta, tau). Subclasses implement `contribution`.
 
     /!\\ Read eos.md
+
+    All variables computed in HelmholtzEOS.props_rhoT use first order derivatives
+    of both Ideal and Residual terms. derivatives returns these derivatives'
+    values along with their scale used to estimate the numerical noise due to
+    downstream computations.
     """
 
     def contribution(self, delta, tau):
         raise NotImplementedError
 
     def derivatives(self, delta, tau) -> Tuple:
-        return _by_autodiff(self.contribution, delta, tau)
+        out = _by_autodiff(self.contribution, delta, tau)
+        return out, tuple(jnp.abs(v) for v in out[:3])
 
 
 class IdealLead(IdealTerm):
@@ -117,7 +171,15 @@ class IdealLead(IdealTerm):
 
     def tau_derivatives(self, delta, tau) -> Tuple:
         a = self.contribution(delta, tau)
-        return a, self.a_log / tau + self.a2, -self.a_log / (tau * tau)
+        size = (
+            jnp.abs(jnp.log(delta))
+            + abs(self.a_log) * jnp.abs(jnp.log(tau))
+            + abs(self.a1)
+            + abs(self.a2) * tau
+        )
+        size_t = abs(self.a_log) / tau + abs(self.a2)
+        values = (a, self.a_log / tau + self.a2, -self.a_log / (tau * tau))
+        return values, (size, size_t)
 
 
 class IdealPlanckEinstein(IdealTerm):
@@ -147,13 +209,19 @@ class IdealPlanckEinstein(IdealTerm):
         a = jnp.zeros_like(tau)
         a_t = jnp.zeros_like(tau)
         a_tt = jnp.zeros_like(tau)
+        size = jnp.zeros_like(tau)
+        size_t = jnp.zeros_like(tau)
         for n, theta in zip(self.n, self.theta):
             e = jnp.exp(-theta * tau)
             gap = -jnp.expm1(-theta * tau)  # 1 - e^-x
-            a = a + n * jnp.log(gap)
-            a_t = a_t + n * theta * e / gap
+            value = n * jnp.log(gap)
+            slope = n * theta * e / gap
+            a = a + value
+            a_t = a_t + slope
             a_tt = a_tt - n * theta * theta * e / (gap * gap)
-        return a, a_t, a_tt
+            size = size + jnp.abs(value)
+            size_t = size_t + jnp.abs(slope)
+        return (a, a_t, a_tt), (size, size_t)
 
 
 class Polynomial(ResidualTerm):
@@ -179,12 +247,15 @@ class Polynomial(ResidualTerm):
 
     def derivatives(self, delta, tau) -> Tuple:
         out = [jnp.zeros_like(delta * tau)] * 6
+        size = [jnp.zeros_like(delta * tau)] * 3
         zero = jnp.zeros_like(delta)
         for n, d, t in zip(self.n, self.d, self.t):
             base = n * static_pow(delta, d) * static_pow(tau, t)
             part = _from_log_derivatives(base, delta, tau, d, t, zero, zero, zero, zero)
             out = [a + b for a, b in zip(out, part)]
-        return tuple(out)
+            part = _magnitudes(base, delta, tau, d, t, zero, zero)
+            size = [a + b for a, b in zip(size, part)]
+        return tuple(out), tuple(size)
 
 
 class ExponentialDensity(ResidualTerm):
@@ -211,6 +282,7 @@ class ExponentialDensity(ResidualTerm):
 
     def derivatives(self, delta, tau) -> Tuple:
         out = [jnp.zeros_like(delta * tau)] * 6
+        size = [jnp.zeros_like(delta * tau)] * 3
         zero = jnp.zeros_like(delta)
         for n, d, t, p in zip(self.n, self.d, self.t, self.p):
             L_d = -p * static_pow(delta, p - 1)
@@ -223,7 +295,9 @@ class ExponentialDensity(ResidualTerm):
             )
             part = _from_log_derivatives(base, delta, tau, d, t, L_d, dL_d, zero, zero)
             out = [a + b for a, b in zip(out, part)]
-        return tuple(out)
+            part = _magnitudes(base, delta, tau, d, t, L_d, zero)
+            size = [a + b for a, b in zip(size, part)]
+        return tuple(out), tuple(size)
 
 
 class Gaussian(ResidualTerm):
@@ -256,6 +330,7 @@ class Gaussian(ResidualTerm):
 
     def derivatives(self, delta, tau) -> Tuple:
         out = [jnp.zeros_like(delta * tau)] * 6
+        size = [jnp.zeros_like(delta * tau)] * 3
         for n, d, t, phi, beta, D, gamma in zip(
             self.n, self.d, self.t, self.phi, self.beta, self.D, self.gamma
         ):
@@ -279,7 +354,9 @@ class Gaussian(ResidualTerm):
                 jnp.full_like(tau, 2.0 * beta),
             )
             out = [a + b for a, b in zip(out, part)]
-        return tuple(out)
+            part = _magnitudes(base, delta, tau, d, t, 2.0 * phi * dd, 2.0 * beta * dt)
+            size = [a + b for a, b in zip(size, part)]
+        return tuple(out), tuple(size)
 
 
 class GeneralizedExponential(ResidualTerm):
@@ -316,6 +393,7 @@ class GeneralizedExponential(ResidualTerm):
 
     def derivatives(self, delta, tau) -> Tuple:
         out = [jnp.zeros_like(delta * tau)] * 6
+        size = [jnp.zeros_like(delta * tau)] * 3
         zero = jnp.zeros_like(delta)
         for n, d, t, p, g in zip(self.n, self.d, self.t, self.p, self.g):
             L_d = -g * p * static_pow(delta, p - 1)
@@ -328,7 +406,9 @@ class GeneralizedExponential(ResidualTerm):
             )
             part = _from_log_derivatives(base, delta, tau, d, t, L_d, dL_d, zero, zero)
             out = [a + b for a, b in zip(out, part)]
-        return tuple(out)
+            part = _magnitudes(base, delta, tau, d, t, L_d, zero)
+            size = [a + b for a, b in zip(size, part)]
+        return tuple(out), tuple(size)
 
 
 # - Following terms are less common and might pose numerical issues, they are to be dealt with

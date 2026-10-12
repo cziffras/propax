@@ -123,9 +123,12 @@ def solve_1d(
 
     props = eos.props_rhoT(rho_final, T_final)
     sensitivity = state_sensitivity(eos.props_rhoT, rho_final, T_final)
+    noise = eos.noise_rhoT(*jax.lax.stop_gradient((rho_final, T_final)))
     op_status = (
         inputs_finite
-        & is_a_root(props[key], target_safe, jnp.maximum(scale, sensitivity[key]))
+        & is_a_root(
+            props[key], target_safe, jnp.maximum(scale, sensitivity[key]), noise[key]
+        )
         & (f_lo * f_hi <= 0.0)
         & (slope_at_root * (f_hi - f_lo) >= 0.0)
         & node_is_valid(saturation, rho_final, T_final)
@@ -256,10 +259,11 @@ def solve_nested(
 
     props = eos.props_rhoT(rho_sol, T_sol)
     sensitivity = state_sensitivity(eos.props_rhoT, rho_sol, T_sol)
+    noise = eos.noise_rhoT(*jax.lax.stop_gradient((rho_sol, T_sol)))
     P_scale = jnp.maximum(ThermoVar.P.spec.scale, sensitivity[ThermoVar.P])
     op_status = (
-        is_a_root(props[ThermoVar.P], P, P_scale)
-        & is_a_root(props[key], y, jnp.maximum(scale, sensitivity[key]))
+        is_a_root(props[ThermoVar.P], P, P_scale, noise[ThermoVar.P])
+        & is_a_root(props[key], y, jnp.maximum(scale, sensitivity[key]), noise[key])
         & inputs_finite
         & jnp.logical_not(is_inactive)
         & node_is_valid(saturation, rho_sol, T_sol)

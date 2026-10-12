@@ -9,7 +9,8 @@ from typing import Dict, Self
 import jax
 import jax.numpy as jnp
 
-_SCALING_FACTOR = float(jnp.finfo(jnp.float32).eps / jnp.finfo(jnp.float64).eps)
+_EPS64 = float(jnp.finfo(jnp.float64).eps)
+_SCALING_FACTOR = float(jnp.finfo(jnp.float32).eps) / _EPS64
 
 
 def _loosen(value, factor: float, loosest):
@@ -60,23 +61,25 @@ class PrecisionScaled:
 
 @dataclass(frozen=True)
 class Accuracies(PrecisionScaled):
-    outer_rtol: float = 1e-13
+    outer_rtol: float = 512 * _EPS64
     """Temperature along an isobar, enclosing the density solve at each step."""
 
-    newton_rtol: float = 1e-15
+    newton_rtol: float = 5 * _EPS64
     """Relative step at which the safeguarded Newton stops. A few ulp."""
 
-    root_atol: float = field(default=1e-8, metadata={"loosest": 1e-5})
+    root_rtol: float = field(default=1e-8, metadata={"loosest": 1e-5})
     """Acceptance, not convergence: how small a scaled residual counts as a
     root. It rejects an answer rather than stopping a loop."""
 
-    channel_edge: float = 1e-12
+    evaluation_noise: float = field(default=4.0, metadata={"scales": False})
+
+    channel_edge: float = 64 * _EPS64
     """How far past its ends a fitted channel still answers, as a relative tolerance."""
 
-    sat_edge_nudge: float = 1e-12
+    sat_edge_nudge: float = 64 * _EPS64
     """How far off the saturation line a bracket endpoint is pushed, relative."""
 
-    quality_slack: float = field(default=1e-12, metadata={"scales": False})
+    quality_slack: float = field(default=1e-12, metadata={"loosest": 1e-6})
     """Slack on [0, 1] when P or T is given. Outward only, and only there.
 
     Widened for float32 it only reaches further outside [0, 1], where the 

@@ -10,9 +10,23 @@ from propax.utils.types import jaxBool
 from ..tolerances import TOL
 
 
-def is_a_root(got: Array, wanted: Array, scale) -> jaxBool:
-    return jnp.abs(got - wanted) <= TOL.acc.root_atol * jnp.maximum(
-        scale, jnp.abs(wanted)
+def is_a_root(got: Array, wanted: Array, scale, noise=0.0) -> jaxBool:
+    """Whether `got` reproduces `wanted`, this is a key acceptance rule of every flash.
+
+    |got - wanted| <= root_rtol * max(scale, |wanted|) + evaluation_noise * noise
+
+    - The first term is is an accuracy relative to |wanted|, floored
+    at `scale` so that a target near zero is not held to an infinite precision.
+    Callers pass max(spec.scale, state_sensitivity), which widens it where the
+    state is ill-conditioned with respect to (rho, T).
+    - The second is the accuracy inherent to the arithmetics of the EOS : `noise`
+    is `HelmholtzEOS.noise_rhoT`, the round-off of an EOS evaluation whose terms
+    cancel. It is useless in float64 but crucial for some fluids in float32.
+    """
+    return (
+        jnp.abs(got - wanted)
+        <= TOL.acc.root_rtol * jnp.maximum(scale, jnp.abs(wanted))
+        + TOL.acc.evaluation_noise * noise
     )
 
 

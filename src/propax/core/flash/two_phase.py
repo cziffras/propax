@@ -165,8 +165,7 @@ def solve_two_phase(
         throw=False,
         adjoint=optx.ImplicitAdjoint(linear_solver=linear_solver),
     )
-    success = sol.result == optx.RESULTS.successful
-    T_final = pick(success, sol.value, T_guess)
+    T_final = pick(jnp.isfinite(sol.value), sol.value, T_guess)
 
     sat_final = saturation.state_T(T_final)
     L_other_f, V_other_f = get_sat_bounds(sat_final, other)
@@ -177,15 +176,20 @@ def solve_two_phase(
     # `linear` is then what has to come back, ignore the solver's flag
     L_lin_f, V_lin_f = get_sat_bounds(sat_final, linear)
     lin_rebuilt = L_lin_f + x_final * (V_lin_f - L_lin_f)
+    T_frozen = jax.lax.stop_gradient(sat_final.T)
+    noise_L, noise_V = (
+        eos.noise_rhoT(jax.lax.stop_gradient(branch[ThermoVar.D]), T_frozen)[linear]
+        for branch in (sat_final.L, sat_final.V)
+    )
+    noise = jnp.abs(1.0 - x_final) * noise_L + jnp.abs(x_final) * noise_V
 
     in_solver_range = (T_final >= eos.T_triple) & (T_final < saturation.T_crit)
     is_biphasic_flag = (
         crossed
-        & success
         & inputs_finite
         & in_solver_range
         & well_posed
-        & is_a_root(lin_rebuilt, linear_norm, s_linear)
+        & is_a_root(lin_rebuilt, linear_norm, s_linear, noise)
         & is_two_phase(x_final, jnp.asarray(True), slack=slack)
     )
     return is_biphasic_flag, T_final, clamp_quality(x_final, slack)

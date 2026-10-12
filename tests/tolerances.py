@@ -41,7 +41,7 @@ class Residual(PrecisionScaled):
 
     @property
     def bound(self) -> float:
-        return self.slack * TOL.acc.root_atol
+        return self.slack * TOL.acc.root_rtol
 
 
 def for_precision(x64: bool):

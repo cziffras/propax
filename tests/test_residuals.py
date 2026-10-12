@@ -6,6 +6,7 @@ import pytest
 from propax import Interface
 from propax.core.config import ThermoVar
 from propax.core.flash.flash_utils import state_sensitivity
+from propax.core.tolerances import TOL
 
 from .conftest import RESIDUAL
 
@@ -24,11 +25,29 @@ def _quality(saturation, rho, T):
     return (v - v_L) / (v_V - v_L)
 
 
-def _worst_residual(got, wanted, scale, keep):
+def _noise_on_the_dome(props, rho, T):
+    def rebuilt(t):
+        sat = props.saturation.state_T(t)
+        v_L, v_V = 1.0 / sat.L[ThermoVar.D], 1.0 / sat.V[ThermoVar.D]
+        x = (1.0 / rho - v_L) / (v_V - v_L)
+        return (1.0 - x) * sat.L[ThermoVar.U] + x * sat.V[ThermoVar.U], x
+
+    (_, x), (du_dT, dx_dT) = jax.jvp(rebuilt, (T,), (jnp.ones_like(T),))
+    sat = props.saturation.state_T(T)
+    noise_L, noise_V = (
+        props.eos.noise_rhoT(branch[ThermoVar.D], T)[ThermoVar.U]
+        for branch in (sat.L, sat.V)
+    )
+    noise_T = (jnp.abs(1.0 - x) * noise_L + jnp.abs(x) * noise_V) / jnp.abs(du_dT)
+    return noise_T, jnp.abs(dx_dT) * noise_T
+
+
+def _worst_residual(got, wanted, scale, keep, noise=0.0):
     got, wanted = np.asarray(got), np.asarray(wanted)
     denom = np.maximum(
         scale, np.abs(wanted)
     )  # gives either an a tol for small values or a rtol for greater ones
+    denom = denom + TOL.acc.evaluation_noise * np.asarray(noise) / TOL.acc.root_rtol
     return float((np.abs(got - wanted) / denom)[keep].max())
 
 
@@ -47,16 +66,20 @@ def test_the_two_phase_flash_recovers_the_state_it_was_built_from(props, grid):
     )
 
     T_back = jnp.asarray(out["T"])
-    for label, got, wanted, scale in (
-        ("T", T_back, T, ThermoVar.T.spec.scale),
+    noise_T, noise_x = jax.jit(jax.vmap(lambda r, t: _noise_on_the_dome(props, r, t)))(
+        jnp.asarray(out["rho"]), T_back
+    )
+    for label, got, wanted, scale, noise in (
+        ("T", T_back, T, ThermoVar.T.spec.scale, noise_T),
         (
             "quality",
             _quality(props.saturation, jnp.asarray(out["rho"]), T_back),
             x,
             1.0,
+            noise_x,
         ),
     ):
-        worst = _worst_residual(got, wanted, scale, solved)
+        worst = _worst_residual(got, wanted, scale, solved, noise)
         assert worst < RESIDUAL.bound, (
             f"{label} does not come back: worst scaled residual {worst:.2e}"
         )
@@ -81,9 +104,12 @@ def test_the_flash_zeroes_its_residual(props, grid, pair):
     sensitivity = jax.jit(
         jax.vmap(lambda r, t: state_sensitivity(props.eos.props_rhoT, r, t))
     )(rho_out, T_out)
+    noise = jax.jit(jax.vmap(props.eos.noise_rhoT))(rho_out, T_out)
     for var, wanted in asked.items():
         scale = np.maximum(var.spec.scale, np.asarray(sensitivity[var.internal_key]))
-        worst = _worst_residual(back[var.internal_key], wanted, scale, solved)
+        worst = _worst_residual(
+            back[var.internal_key], wanted, scale, solved, noise[var.internal_key]
+        )
         assert worst < RESIDUAL.bound, (
             f"{var.value} does not come back: worst scaled residual {worst:.2e}"
         )

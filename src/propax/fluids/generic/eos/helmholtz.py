@@ -148,15 +148,25 @@ class HelmholtzEOS(eqx.Module):
 
     def _thermo_state(self, delta, tau):
         a0 = a0_t = a0_tt = jnp.asarray(0.0)
+        size_a0 = size_a0_t = jnp.asarray(0.0)
         for term in self.ideal_terms:
-            v, v_t, v_tt = term.tau_derivatives(delta, tau)
+            (v, v_t, v_tt), (m, m_t) = term.tau_derivatives(delta, tau)
             a0, a0_t, a0_tt = a0 + v, a0_t + v_t, a0_tt + v_tt
+            size_a0, size_a0_t = size_a0 + m, size_a0_t + m_t
 
         ar = ar_d = ar_t = ar_dd = ar_tt = ar_dt = jnp.asarray(0.0)
+        size_ar = size_ar_d = size_ar_t = jnp.asarray(0.0)
         for term in self.residual_terms:
-            v, v_d, v_t, v_dd, v_tt, v_dt = term.derivatives(delta, tau)
+            (v, v_d, v_t, v_dd, v_tt, v_dt), (m, m_d, m_t) = term.derivatives(
+                delta, tau
+            )
             ar, ar_d, ar_t = ar + v, ar_d + v_d, ar_t + v_t
             ar_dd, ar_tt, ar_dt = ar_dd + v_dd, ar_tt + v_tt, ar_dt + v_dt
+            size_ar, size_ar_d, size_ar_t = (
+                size_ar + m,
+                size_ar_d + m_d,
+                size_ar_t + m_t,
+            )
 
         return dict(
             a0=a0,
@@ -168,6 +178,49 @@ class HelmholtzEOS(eqx.Module):
             ar_dd=ar_dd,
             ar_tt=ar_tt,
             ar_dt=ar_dt,
+            size_a0=size_a0,
+            size_ar=size_ar,
+            size_a0_t=size_a0_t,
+            size_ar_d=size_ar_d,
+            size_ar_t=size_ar_t,
+        )
+
+    def noise_rhoT(self, rho_mass, T) -> PropertyMap:
+        """
+        In float32 bits precision (mostly), large numbers can produce considerable noise
+        that accumulates across computations and makes hard to define a single tolerance
+        for all fluids whose equations of state behave in fundamentally different ways.
+
+        See for instance the estimated noise for r22 near the triple point (this situation was
+        met in the tests):
+
+        At a liquid fraction of 8e-6 and 0.43K above the triple point, we aim at retrieving
+        a correct specific internal energy sitting at 30 034.5 J/kg, an intuitive maximal
+        tolerance in float32 could be set at 1 J/kg, however the noise coming from the internals
+        of props_rhoT give 186 J/kg of irreducible noise, the solve, while correct is rejected !
+
+        This is why precisions are set as ulps and computed relatively to typical magnitudes.
+        """
+        rho_mol = jnp.asarray(rho_mass) / self.molar_mass
+        delta = rho_mol / self.rho_red_mol
+        tau = self.T_red / jnp.asarray(T)
+        sizes = self._thermo_state(delta, tau)
+
+        ulp = jnp.finfo(jnp.result_type(delta)).eps
+        RT = self.R_u * jnp.asarray(T)
+        compression = 1.0 + delta * sizes["size_ar_d"]
+        caloric = tau * (sizes["size_a0_t"] + sizes["size_ar_t"])
+        entropic = caloric + sizes["size_a0"] + sizes["size_ar"]
+        zero = jnp.zeros_like(delta)
+        return PropertyMap(
+            {
+                ThermoVar.P: ulp * rho_mol * RT * compression,
+                ThermoVar.D: zero,
+                ThermoVar.T: zero,
+                ThermoVar.U: ulp * RT * caloric / self.molar_mass,
+                ThermoVar.H: ulp * RT * (caloric + compression) / self.molar_mass,
+                ThermoVar.S: ulp * self.R_u * entropic / self.molar_mass,
+            }
         )
 
     @overload
@@ -244,27 +297,22 @@ class HelmholtzEOS(eqx.Module):
 
         derivs = self._thermo_state(delta, tau)  # derivatives are computed only once
 
+        RT = self.R_u * T_pos
+        compression = 1.0 + delta * derivs["ar_d"]
+        caloric = tau * (derivs["a0_t"] + derivs["ar_t"])
+        entropic = caloric - derivs["a0"] - derivs["ar"]
+
         # Pressure
-        Z = 1.0 + delta * derivs["ar_d"]
-        P = rho_mol * self.R_u * T_pos * Z
+        P = rho_mol * RT * compression
 
         # molar internal energy
-        u_mol = self.R_u * T_pos * tau * (derivs["a0_t"] + derivs["ar_t"])
-        u_spec = u_mol / self.molar_mass  # J/kg
+        u_spec = RT * caloric / self.molar_mass  # J/kg
 
         # molar enthalpy
-        h_mol = (
-            self.R_u
-            * T_pos
-            * (1 + tau * (derivs["a0_t"] + derivs["ar_t"]) + delta * derivs["ar_d"])
-        )
-        h_spec = h_mol / self.molar_mass  # J/kg
+        h_spec = RT * (caloric + compression) / self.molar_mass  # J/kg
 
         # molar entropy
-        s_mol = self.R_u * (
-            tau * (derivs["a0_t"] + derivs["ar_t"]) - derivs["a0"] - derivs["ar"]
-        )
-        s_spec = s_mol / self.molar_mass  # J/(kg·K)
+        s_spec = self.R_u * entropic / self.molar_mass  # J/(kg·K)
 
         # Cv
         cv_mol = -self.R_u * tau**2 * (derivs["a0_tt"] + derivs["ar_tt"])
