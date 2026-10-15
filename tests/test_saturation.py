@@ -16,18 +16,34 @@ from .conftest import RESIDUAL, RIGHT_ROOT  # noqa: E402
 LIQUID, VAPOUR = 0, 1
 
 
+def _ln_fugacity(eos, rho_mass, t):
+    rho_mol = rho_mass / eos.molar_mass
+    delta = rho_mol / eos.rho_red_mol
+    ar, ar_d = jax.value_and_grad(eos.alphar, argnums=0)(delta, eos.T_red / t)
+    return ar + delta * ar_d + jnp.log(rho_mol * eos.R_u * t)
+
+
 def _equilibrium_gap(eos, rho_L, rho_V, T):
     def ln_fugacity(rho_mass, t):
-        rho_mol = rho_mass / eos.molar_mass
-        delta = rho_mol / eos.rho_red_mol
-        ar, ar_d = jax.value_and_grad(eos.alphar, argnums=0)(delta, eos.T_red / t)
-        return ar + delta * ar_d + jnp.log(rho_mol * eos.R_u * t)
+        return _ln_fugacity(eos, rho_mass, t)
 
     gap = jnp.abs(ln_fugacity(rho_L, T) - ln_fugacity(rho_V, T))
-    sensitivity = state_sensitivity(ln_fugacity, rho_L, T) + state_sensitivity(
-        ln_fugacity, rho_V, T
-    )
+    sensitivity = state_sensitivity(
+        ln_fugacity, rho_L, T, given=ThermoVar.T
+    ) + state_sensitivity(ln_fugacity, rho_V, T, given=ThermoVar.T)
     return gap / jnp.maximum(1.0, sensitivity)
+
+
+def _gap_if_only_one_density_is_wrong(eos, rho_L, rho_V, T):
+    def ln_fugacity(rho_mass, t):
+        return _ln_fugacity(eos, rho_mass, t)
+
+    def along_density(rho):
+        sensitivity = state_sensitivity(ln_fugacity, rho, T, given=ThermoVar.T)
+        return jnp.maximum(1.0, sensitivity)
+
+    gap = jnp.abs(ln_fugacity(rho_L, T) - ln_fugacity(rho_V, T))
+    return gap / along_density(rho_L), gap / along_density(rho_V)
 
 
 def _coolprop_dome(eos, dome, cp_fluid):
@@ -36,10 +52,12 @@ def _coolprop_dome(eos, dome, cp_fluid):
         q: CP.PropsSI("D", "T", T, "Q", np.full_like(T, q), cp_fluid)
         for q in (LIQUID, VAPOUR)
     }
-    gap = jax.jit(jax.vmap(lambda a, b, t: _equilibrium_gap(eos, a, b, t)))(
-        rho[LIQUID], rho[VAPOUR], dome
+    only_L, only_V = jax.jit(
+        jax.vmap(lambda a, b, t: _gap_if_only_one_density_is_wrong(eos, a, b, t))
+    )(rho[LIQUID], rho[VAPOUR], dome)
+    trusted = (np.asarray(only_L) < RESIDUAL.equal_fugacity) & (
+        np.asarray(only_V) < RESIDUAL.equal_fugacity
     )
-    trusted = np.asarray(gap) < RESIDUAL.equal_fugacity
     assert trusted.mean() >= RIGHT_ROOT.oracle_fraction, (
         f"CoolProp's dome is in equilibrium on only {trusted.mean()} of "
         f"{T.size} temperatures"

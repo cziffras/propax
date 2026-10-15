@@ -122,7 +122,9 @@ def solve_1d(
     slope_at_root = residual(x_final, eos, params, None)[1]
 
     props = eos.props_rhoT(rho_final, T_final)
-    sensitivity = state_sensitivity(eos.props_rhoT, rho_final, T_final)
+    sensitivity = state_sensitivity(
+        eos.props_rhoT, rho_final, T_final, given=tvar_known
+    )
     noise = eos.noise_rhoT(*jax.lax.stop_gradient((rho_final, T_final)))
     op_status = (
         inputs_finite

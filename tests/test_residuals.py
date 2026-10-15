@@ -101,8 +101,11 @@ def test_the_flash_zeroes_its_residual(props, grid, pair):
 
     rho_out, T_out = jnp.asarray(out["rho"]), jnp.asarray(out["T"])
     back = jax.jit(jax.vmap(props.props_rhoT))(rho_out, T_out)
+    given = next((v for v in (ThermoVar.D, ThermoVar.T) if v in pair), None)
     sensitivity = jax.jit(
-        jax.vmap(lambda r, t: state_sensitivity(props.eos.props_rhoT, r, t))
+        jax.vmap(
+            lambda r, t: state_sensitivity(props.eos.props_rhoT, r, t, given=given)
+        )
     )(rho_out, T_out)
     noise = jax.jit(jax.vmap(props.eos.noise_rhoT))(rho_out, T_out)
     for var, wanted in asked.items():

@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Callable, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -7,6 +7,7 @@ from jaxtyping import Array
 from propax.fluids.generic import HelmholtzEOS
 from propax.utils.types import jaxBool
 
+from ..config import ThermoVar
 from ..tolerances import TOL
 
 
@@ -35,12 +36,15 @@ def node_is_valid(saturation, rho, T):
     return (rho > 0.0) & (rho <= saturation.rho_max) & (T > T_lo) & (T < T_hi)
 
 
-def state_sensitivity(of_rho_T: Callable, rho, T):
+def state_sensitivity(of_rho_T: Callable, rho, T, given: Optional[ThermoVar] = None):
     rho = jax.lax.stop_gradient(jnp.asarray(rho))
     T = jax.lax.stop_gradient(jnp.asarray(T))
-    _, along_rho = jax.jvp(lambda r: of_rho_T(r, T), (rho,), (rho,))
-    _, along_T = jax.jvp(lambda t: of_rho_T(rho, t), (T,), (T,))
-    return jax.tree.map(lambda a, b: jnp.abs(a) + jnp.abs(b), along_rho, along_T)
+    directions = []
+    if given != ThermoVar.D:
+        directions.append(jax.jvp(lambda r: of_rho_T(r, T), (rho,), (rho,))[1])
+    if given != ThermoVar.T:
+        directions.append(jax.jvp(lambda t: of_rho_T(rho, t), (T,), (T,))[1])
+    return jax.tree.map(lambda *d: sum(jnp.abs(x) for x in d), *directions)
 
 
 def rho_bounds(saturation) -> Tuple[float, float]:
