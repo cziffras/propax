@@ -121,8 +121,13 @@ def dyadic_split(
 
 
 class ChebyshevChannel:
-    """One quantity along the curve, fitted piecewise. This is the `build side`
-    module that does not require any JAX machinery."""
+    """
+    One quantity along the curve, fitted piecewise. This is the `build side`
+    module that does not require any JAX machinery.
+
+    TODO : extend in with monoticity detection, from experience only one pure fluid
+    requires it, it is `heavywater`.
+    """
 
     def __init__(self, f: Callable[[np.ndarray], np.ndarray], xmin: float, xmax: float):
         self.xmin, self.xmax = xmin, xmax

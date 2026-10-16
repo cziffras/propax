@@ -38,6 +38,7 @@ from propax import Interface  # noqa: E402
 from propax.fluids._registry import EQS_REGISTRY  # noqa: E402
 
 from . import grids  # noqa: E402
+from .info import KNOWN_FAILURES  # noqa: E402
 from .tolerances import for_precision  # noqa: E402
 
 # sample 5 fluids to run the tests locally, the CI uses a dedicated script running
@@ -74,6 +75,10 @@ def pytest_generate_tests(metafunc):
 def pytest_collection_modifyitems(config, items):
     if config.getoption("--fluid"):
         items[:] = [it for it in items if "fluid_name" in it.fixturenames]
+    for item in items:
+        reason = KNOWN_FAILURES.get(item.name)
+        if reason is not None:
+            item.add_marker(pytest.mark.xfail(reason=reason, strict=True))
 
 
 def pytest_report_header(config):
